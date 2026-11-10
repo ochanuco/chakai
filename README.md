@@ -43,7 +43,7 @@ actor の ID は名簿の名前（`owner`、`yukarin` など）で、それ以�
 | `GET /v1/tasks`               | タスクを探す（`project_id`、`q`、`state`（カンマ区切り）、`assignee_id`、`parent_id`、`label`、`limit`） |
 | `POST /v1/tasks`              | 起票する（`project_id`、`title`、`body`、`parent_id`、`state`、`assignee_id`、`labels`）                 |
 | `GET /v1/tasks/:id`           | タスクを読む                                                                                             |
-| `PATCH /v1/tasks/:id` | 更新する（`title`、`body`、`state`、`waiting_on`、`assignee_id`、`labels`、`order`） |
+| `PATCH /v1/tasks/:id`         | 更新する（`title`、`body`、`state`、`waiting_on`、`assignee_id`、`labels`、`order`）                     |
 | `GET /health`                 | 疎通確認                                                                                                 |
 
 ## MCP
