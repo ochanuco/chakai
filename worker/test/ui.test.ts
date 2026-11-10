@@ -273,7 +273,9 @@ describe("画面", () => {
 		expect(body).toContain("本文の 1 行目\n2 行目");
 		expect(body).toContain(`<a href="/tasks/${parent.id}">親の件名</a>`);
 		expect(body).toContain("孫の件名");
-		expect(body).toContain(`data-task="${task.id}"`);
+		expect(body).toContain(
+			`data-task="${task.id}" data-state="review" data-assignee="akarin" data-labels="[&quot;infra&quot;]" data-waiting="進めてよいか"`,
+		);
 		expect(body).toContain('<option value="akarin" selected>Akarin</option>');
 		expect(body).not.toContain('<option value="retired"');
 		expect(body).toMatch(/value="infra" checked/);

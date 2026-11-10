@@ -385,7 +385,7 @@ ${
 		: ""
 }
 <h2>変更</h2>
-<form id="edit" class="card" data-task="${task.id}">
+<form id="edit" class="card" data-task="${task.id}" data-state="${task.state}" data-assignee="${task.assigneeId ?? ""}" data-labels="${JSON.stringify([...task.labels].sort())}" data-waiting="${task.waitingOn ?? ""}">
 <div class="field"><label for="f-state">状態</label><select id="f-state" name="state">${TASK_STATES.map(
 			(s) =>
 				html`<option value="${s}"${s === task.state ? html` selected` : ""}>${s}</option>`,

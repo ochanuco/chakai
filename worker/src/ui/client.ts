@@ -89,12 +89,23 @@ export const CLIENT_JS = `"use strict";
 			for (const name of form.elements.namedItem("new_labels").value.split(/[,、]/)) {
 				if (name.trim()) labels.push(name.trim());
 			}
-			const body = {
-				state: state.value,
-				assignee_id: form.elements.namedItem("assignee_id").value || null,
-				labels: [...new Set(labels)],
-			};
-			if (state.value === "review") body.waiting_on = waitingOn.value.trim();
+			// 開いた後に他の actor が変えた欄を、古い値で上書きしないよう、変えた欄だけを送る
+			const body = {};
+			const chosen = [...new Set(labels)].sort();
+			if (state.value !== form.dataset.state) body.state = state.value;
+			const assignee = form.elements.namedItem("assignee_id").value;
+			if (assignee !== form.dataset.assignee) body.assignee_id = assignee || null;
+			if (JSON.stringify(chosen) !== form.dataset.labels) body.labels = chosen;
+			if (
+				state.value === "review" &&
+				(body.state || waitingOn.value.trim() !== form.dataset.waiting)
+			) {
+				body.waiting_on = waitingOn.value.trim();
+			}
+			if (Object.keys(body).length === 0) {
+				showError("変えた欄が無い");
+				return;
+			}
 			const submit = form.querySelector("button[type=submit]");
 			submit.disabled = true;
 			if (!(await patch(form.dataset.task, body))) submit.disabled = false;
