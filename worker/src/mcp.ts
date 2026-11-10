@@ -242,7 +242,7 @@ export const TOOLS: {
 				discovered_from: {
 					type: "object",
 					description:
-						"このタスクを見つけたときに作業していたタスク。席の run が分かれば run_id も渡す",
+						"このタスクを見つけたときに作業していたタスク。席の run が分かれば run_id も渡す（そのタスクかその祖先を回した run）",
 					properties: { task_id: id, run_id: id },
 					required: ["task_id"],
 					additionalProperties: false,
@@ -303,7 +303,7 @@ export const TOOLS: {
 		name: "relate_tasks",
 		title: "タスク同士をつなぐ",
 		description:
-			"「from_task が kind で to_task」と読める向きに関係を付ける。discovered_from は見つけたタスクから作業していたタスクへ、follows は続きのタスクから区切ったタスクへ、replaced_by はやめたタスクから作り直したタスクへ。run_id は discovered_from にだけ付けられる。",
+			"「from_task が kind で to_task」と読める向きに関係を付ける。discovered_from は見つけたタスクから作業していたタスクへ、follows は続きのタスクから区切ったタスクへ、replaced_by はやめたタスクから作り直したタスクへ。run_id は discovered_from にだけ付けられ、to_task かその祖先を回した run に限る。",
 		inputSchema: {
 			type: "object",
 			properties: {

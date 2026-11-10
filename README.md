@@ -35,7 +35,7 @@ actor の ID は名簿の名前（`owner`、`yukarin` など）で、それ以�
 - agent が親の下に `todo` でタスクを作るとき、作るタスクから上へ agent が作ったタスクが続く数（作るタスク自身を含む）が `max_self_todo_depth` を超えると拒む。人が作ったタスクと、席に渡したことのあるタスク（`runs` に行がある）で数え直す。`backlog` で作るのは通すが、agent がそれを `todo` に上げるときにも同じ上限が掛かる。
 - 仕分け待ちは、agent が起票した `backlog` で `triaged_at` が空のタスク。owner が状態を変えるか、`backlog` に残すと決めると `triaged_at` が入る。
 - タスク同士の関係は「`from_task` が `kind` で `to_task`」と読む。`discovered_from`（見つけたタスク → 作業していたタスク）、`follows`（続きのタスク → 区切ったタスク）、`replaced_by`（やめたタスク → 作り直したタスク）。
-- 同じタスクへの更新が重なったら、後から書く側が読み直してやり直す。`tasks.revision` は更新のたびに 1 増え、読んだ時点から進んでいる書き込みは D1 の trigger が拒む。
+- 同じタスクへの更新が重なったら、後から書く側が読み直してやり直す。`tasks.revision` は更新のたびに 1 増え、読んだ時点から進んでいる書き込みは D1 の trigger が拒む。`settings` も同じ仕組みで、行は消さない（上の scope に戻した行は `null` を持つ）。
 
 ## REST
 
@@ -49,7 +49,7 @@ actor の ID は名簿の名前（`owner`、`yukarin` など）で、それ以�
 | `GET /v1/tasks/:id`            | タスクを、関係（`relations`）と一緒に読む                                                                                                                    |
 | `PATCH /v1/tasks/:id`          | 更新する（`title`、`body`、`state`、`waiting_on`、`assignee_id`、`labels`、`order`）                                                                         |
 | `GET /v1/tasks/:id/next`       | 親の子孫のうち、木の順（深さ優先、同じ親の中は `order_key` の順）で最初の `todo` を `task` に返す。無ければ `null`。`descendant_states` は子孫の状態ごとの数 |
-| `POST /v1/tasks/:id/relations` | `:id` のタスクから関係を付ける（`kind`、`to_task`、`run_id`）                                                                                                |
+| `POST /v1/tasks/:id/relations` | `:id` のタスクから関係を付ける（`kind`、`to_task`、`run_id`）。`run_id` は `discovered_from` にだけ付けられ、`to_task` かその祖先を回した run に限る         |
 | `POST /v1/tasks/:id/triage`    | 仕分け待ちのタスクを `backlog` のまま仕分け済みにする。owner だけ                                                                                            |
 | `POST /v1/runs`                | 席の実行記録を始める（`task_id`、`seat`、`model`、`hishaku_no`）。repo の無いプロジェクトのタスクは拒む                                                      |
 | `POST /v1/runs/:id/end`        | 実行記録を閉じる                                                                                                                                             |

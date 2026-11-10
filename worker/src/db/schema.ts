@@ -184,13 +184,16 @@ export const taskRelations = sqliteTable(
 	],
 );
 
-// scope は global かプロジェクトの ID。value は JSON
+// scope は global かプロジェクトの ID。value は JSON で、上の scope に戻した行は null を持つ。
+// 行を消すと revision で同時の書き込みを見つけられなくなるので、消さない
 export const settings = sqliteTable(
 	"settings",
 	{
 		scope: text("scope").notNull(),
 		key: text("key").notNull(),
 		value: text("value").notNull(),
+		// 更新のたびに 1 ずつ増える。同時の更新を見つけるために使う（migration の trigger）
+		revision: integer("revision").notNull().default(0),
 	},
 	(t) => [primaryKey({ columns: [t.scope, t.key] })],
 );

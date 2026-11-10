@@ -1,3 +1,4 @@
+import { env } from "cloudflare:workers";
 import { beforeAll, describe, expect, it } from "vitest";
 import {
 	type As,
@@ -85,6 +86,23 @@ describe("実行記録", () => {
 			["run", "started", "yukarin", WORKING.id],
 			["run", "ended_at", "yukarin", WORKING.id],
 		]);
+	});
+
+	it("同時に閉じても、履歴は 1 つで、どちらも残った時刻を返す", async () => {
+		const project = await projectWithRepo();
+		const parent = await newTask(project.id);
+		const run = await startRun(parent.id);
+		const results = await Promise.all(
+			[yukarin, akarin, yukarin, akarin].map(async (as) =>
+				(await call(as, "POST", `/v1/runs/${run.id}/end`)).json<RunJson>(),
+			),
+		);
+		const events = (await eventsOf(run.id)).filter(
+			(e) => e.field === "ended_at",
+		);
+		expect(events).toHaveLength(1);
+		const endedAt = JSON.parse(events[0]?.after ?? "null");
+		expect(results.map((r) => r.ended_at)).toEqual(Array(4).fill(endedAt));
 	});
 
 	it("repo の無いプロジェクトのタスクと、無いタスクは渡せない", async () => {
@@ -255,6 +273,67 @@ describe("タスク同士の関係", () => {
 		const { relations } = await read(a.id);
 		expect(relations).toHaveLength(1);
 		expect(relations[0]?.created_by).toBe("yukarin");
+	});
+
+	it("同じ関係を同時に付けても、どれも通り、行も履歴も 1 つ", async () => {
+		const project = await newProject();
+		const a = await newTask(project.id);
+		const b = await newTask(project.id);
+		const responses = await Promise.all(
+			[yukarin, akarin, yukarin, akarin].map((as) =>
+				relate(a.id, { kind: "follows", to_task: b.id }, as),
+			),
+		);
+		expect(responses.map((r) => r.status)).toEqual([200, 200, 200, 200]);
+		const creators = await Promise.all(
+			responses.map(async (r) => (await r.json<RelationJson>()).created_by),
+		);
+		expect(new Set(creators).size).toBe(1);
+		expect((await read(a.id)).relations).toHaveLength(1);
+		expect(
+			(await eventsOf(a.id)).filter((e) => e.field === "relation"),
+		).toHaveLength(1);
+	});
+
+	it("discovered_from の run は、相手のタスクかその祖先を回した run に限る", async () => {
+		const project = await projectWithRepo();
+		const parent = await newTask(project.id, { state: "todo" });
+		const child = await newTask(project.id, { parent_id: parent.id });
+		const grandchild = await newTask(project.id, { parent_id: child.id });
+		const unrelated = await newTask(project.id);
+		const run = await startRun(parent.id);
+		const childRun = await startRun(child.id);
+		const found = await newTask(project.id, {}, yukarin);
+
+		for (const to of [parent.id, grandchild.id]) {
+			const res = await relate(found.id, {
+				kind: "discovered_from",
+				to_task: to,
+				run_id: run.id,
+			});
+			expect(res.status).toBe(200);
+		}
+		// 子孫を回した run と、関係の無いタスクは通さない
+		const cases: [string, string][] = [
+			[parent.id, childRun.id],
+			[unrelated.id, run.id],
+		];
+		for (const [to, runId] of cases) {
+			const res = await relate(found.id, {
+				kind: "discovered_from",
+				to_task: to,
+				run_id: runId,
+			});
+			expect(res.status).toBe(400);
+			expect(await res.json()).toMatchObject({ error: "run_not_for_task" });
+		}
+		const res = await call(yukarin, "POST", "/v1/tasks", {
+			project_id: project.id,
+			title: "x",
+			discovered_from: { task_id: unrelated.id, run_id: run.id },
+		});
+		expect(res.status).toBe(400);
+		expect(await res.json()).toMatchObject({ error: "run_not_for_task" });
 	});
 
 	it("create_task で discovered_from を一緒に付けられる（別のプロジェクトでもよい）", async () => {
@@ -513,6 +592,47 @@ describe("settings", () => {
 				after: "2",
 			},
 		]);
+	});
+
+	it("同時に書いても、履歴の before と after がつながる", async () => {
+		const project = await newProject();
+		const responses = await Promise.all(
+			[4, 5, 6, 7, null].map((value) => put(project.id, value, mac)),
+		);
+		expect(responses.map((r) => r.status)).toEqual([200, 200, 200, 200, 200]);
+
+		const events = (await eventsOf(project.id)).filter(
+			(e) => e.entity === "setting",
+		);
+		expect(events.length).toBeGreaterThanOrEqual(4);
+		expect(events[0]?.before).toBeNull();
+		for (let i = 1; i < events.length; i++) {
+			expect(events[i]?.before).toBe(events[i - 1]?.after);
+		}
+		const last = JSON.parse(events.at(-1)?.after ?? "null");
+		expect(await depth(project.id)).toEqual(
+			last === null
+				? { value: 3, source: "default" }
+				: { value: last, source: "project" },
+		);
+	});
+
+	it("読んだ後に他の書き込みが入った更新と、行の削除を D1 が拒む", async () => {
+		const project = await newProject();
+		await put(project.id, 4);
+		const update = (revision: number) =>
+			env.DB.prepare(
+				"UPDATE settings SET value = '9', revision = ? WHERE scope = ?",
+			)
+				.bind(revision, project.id)
+				.run();
+		await expect(update(3)).rejects.toThrow(/setting changed since read/);
+		await update(1);
+		await expect(
+			env.DB.prepare("DELETE FROM settings WHERE scope = ?")
+				.bind(project.id)
+				.run(),
+		).rejects.toThrow(/settings are never deleted/);
 	});
 
 	it("書けるのは owner だけ", async () => {

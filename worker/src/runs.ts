@@ -1,7 +1,7 @@
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import type { Principal } from "./auth.ts";
 import type { Db } from "./db/client.ts";
-import { projectRepos, runs, tasks } from "./db/schema.ts";
+import { events, projectRepos, runs, tasks } from "./db/schema.ts";
 import { writeAll } from "./db/write.ts";
 import { eventInserts } from "./events.ts";
 import { newId } from "./id.ts";
@@ -31,9 +31,15 @@ const toRun = (row: RunRow): Run => ({
 	ended_at: row.endedAt,
 });
 
-export const runExists = async (db: Db, id: string) =>
-	(await db.select({ id: runs.id }).from(runs).where(eq(runs.id, id)).limit(1))
-		.length > 0;
+/** run が回した親タスクの ID。run が無ければ undefined */
+export const taskOfRun = async (db: Db, id: string) =>
+	(
+		await db
+			.select({ taskId: runs.taskId })
+			.from(runs)
+			.where(eq(runs.id, id))
+			.limit(1)
+	)[0]?.taskId;
 
 export type StartRunInput = {
 	task_id: string;
@@ -91,23 +97,35 @@ export const endRun = async (
 	who: Principal,
 	id: string,
 ): Promise<Result<Run>> => {
-	const [current] = await db
-		.select()
-		.from(runs)
-		.where(eq(runs.id, id))
-		.limit(1);
+	const find = async () =>
+		(await db.select().from(runs).where(eq(runs.id, id)).limit(1))[0];
+	const current = await find();
 	if (!current) return fail(404, "run_not_found", "run が無い");
 	if (current.endedAt) return ok(toRun(current));
 
 	const now = new Date().toISOString();
+	const open = and(eq(runs.id, id), isNull(runs.endedAt));
 	await writeAll(db, [
-		db
-			.update(runs)
-			.set({ endedAt: now })
-			.where(and(eq(runs.id, id), isNull(runs.endedAt))),
-		...eventInserts(db, who, now, [
-			{ entity: "run", entityId: id, field: "ended_at", after: now },
-		]),
+		// 同時に閉じにきた相手が先に書いていたら、履歴も時刻も足さない。
+		// 開いているかを書き込みの時点の行で確かめるので、run を閉じる前に events を書く
+		db.insert(events).select(
+			db
+				.select({
+					id: sql<string>`${newId()}`.as("id"),
+					entity: sql<string>`'run'`.as("entity"),
+					entityId: sql<string>`${runs.id}`.as("entity_id"),
+					actorId: sql<string>`${who.actorId}`.as("actor_id"),
+					callerId: sql<string | null>`${who.callerId}`.as("caller_id"),
+					at: sql<string>`${now}`.as("at"),
+					field: sql<string>`'ended_at'`.as("field"),
+					before: sql<string | null>`NULL`.as("before"),
+					after: sql<string>`${JSON.stringify(now)}`.as("after"),
+				})
+				.from(runs)
+				.where(open),
+		),
+		db.update(runs).set({ endedAt: now }).where(open),
 	]);
-	return ok(toRun({ ...current, endedAt: now }));
+	const ended = await find();
+	return ok(toRun(ended ?? { ...current, endedAt: now }));
 };

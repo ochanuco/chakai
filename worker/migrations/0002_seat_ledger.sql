@@ -16,6 +16,7 @@ CREATE TABLE `settings` (
 	`scope` text NOT NULL,
 	`key` text NOT NULL,
 	`value` text NOT NULL,
+	`revision` integer DEFAULT 0 NOT NULL,
 	PRIMARY KEY(`scope`, `key`)
 );
 --> statement-breakpoint

@@ -1,11 +1,11 @@
-import { and, eq, or } from "drizzle-orm";
+import { and, eq, or, sql } from "drizzle-orm";
 import type { Principal } from "./auth.ts";
 import type { Db } from "./db/client.ts";
 import { type RelationKind, taskRelations, tasks } from "./db/schema.ts";
-import { writeAll } from "./db/write.ts";
+import { retryOnConflict, writeAll } from "./db/write.ts";
 import { eventInserts } from "./events.ts";
 import { fail, ok, type Result } from "./result.ts";
-import { runExists } from "./runs.ts";
+import { taskOfRun } from "./runs.ts";
 
 export type Relation = {
 	from_task: string;
@@ -82,8 +82,22 @@ export const checkRelation = async (
 				"run_id は discovered_from にだけ付けられる",
 			);
 		}
-		if (!(await runExists(db, input.run_id))) {
-			return fail(400, "unknown_run", "run が無い");
+		const runTask = await taskOfRun(db, input.run_id);
+		if (!runTask) return fail(400, "unknown_run", "run が無い");
+		// その run が回していた木の中で見つけた、と言えるものだけを通す
+		const [inTree] = await db.all<{ id: string }>(sql`
+			WITH RECURSIVE up(id, parent_id) AS (
+				SELECT id, parent_id FROM tasks WHERE id = ${input.to_task}
+				UNION ALL
+				SELECT t.id, t.parent_id FROM tasks t JOIN up ON t.id = up.parent_id
+			)
+			SELECT id FROM up WHERE id = ${runTask} LIMIT 1`);
+		if (!inTree) {
+			return fail(
+				400,
+				"run_not_for_task",
+				"run の親タスクが、見つけた元のタスクでもその祖先でもない",
+			);
 		}
 	}
 	return ok(null);
@@ -134,26 +148,32 @@ export const relateTasks = async (
 	const checked = await checkRelation(db, fromTask, input);
 	if (!checked.ok) return checked;
 
-	const [existing] = await db
-		.select()
-		.from(taskRelations)
-		.where(
-			and(
-				eq(taskRelations.fromTask, fromTask),
-				eq(taskRelations.kind, input.kind),
-				eq(taskRelations.toTask, input.to_task),
-			),
-		)
-		.limit(1);
-	if (existing) return ok(toRelation(existing));
+	// 同じ関係を同時に付けにきた相手が先に書いていたら、一意制約で弾かれる。読み直して、その行を返す
+	return retryOnConflict<Result<Relation>>(
+		async () => {
+			const [existing] = await db
+				.select()
+				.from(taskRelations)
+				.where(
+					and(
+						eq(taskRelations.fromTask, fromTask),
+						eq(taskRelations.kind, input.kind),
+						eq(taskRelations.toTask, input.to_task),
+					),
+				)
+				.limit(1);
+			if (existing) return ok(toRelation(existing));
 
-	const { relation, statements } = relationWrites(
-		db,
-		who,
-		new Date().toISOString(),
-		fromTask,
-		input,
+			const { relation, statements } = relationWrites(
+				db,
+				who,
+				new Date().toISOString(),
+				fromTask,
+				input,
+			);
+			await writeAll(db, statements);
+			return ok(relation);
+		},
+		() => fail(409, "conflict", "他の書き込みと重なった。もう一度試す"),
 	);
-	await writeAll(db, statements);
-	return ok(relation);
 };

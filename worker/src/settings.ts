@@ -3,7 +3,7 @@ import { requireOwner } from "./actors.ts";
 import type { Principal } from "./auth.ts";
 import type { Db } from "./db/client.ts";
 import { settings } from "./db/schema.ts";
-import { writeAll } from "./db/write.ts";
+import { retryOnConflict, writeAll } from "./db/write.ts";
 import { eventInserts } from "./events.ts";
 import { projectExists } from "./projects.ts";
 import { fail, ok, type Result } from "./result.ts";
@@ -29,7 +29,8 @@ const resolve = async (db: Db, scope: string): Promise<Settings> => {
 		.where(inArray(settings.scope, [GLOBAL_SCOPE, scope]));
 	const stored = (at: string, key: SettingKey) => {
 		const row = rows.find((r) => r.scope === at && r.key === key);
-		return row ? (JSON.parse(row.value) as number) : undefined;
+		const value = row ? (JSON.parse(row.value) as number | null) : null;
+		return value ?? undefined;
 	};
 	const one = (key: SettingKey): { value: number; source: Source } => {
 		const own = scope === GLOBAL_SCOPE ? undefined : stored(scope, key);
@@ -62,7 +63,7 @@ export const getSettings = async (
 
 export type PutSettingInput = { key: SettingKey; value: number | null };
 
-/** value が null なら、その scope の行を消して上の scope の値に戻す */
+/** value が null なら、その scope の値を外して上の scope の値に戻す */
 export const putSetting = async (
 	db: Db,
 	who: Principal,
@@ -74,30 +75,36 @@ export const putSetting = async (
 	if (!(await scopeExists(db, scope))) return noScope();
 
 	const at = and(eq(settings.scope, scope), eq(settings.key, input.key));
-	const [current] = await db.select().from(settings).where(at).limit(1);
-	const before = current ? (JSON.parse(current.value) as number) : null;
-	if (before !== input.value) {
-		const value = JSON.stringify(input.value);
-		await writeAll(db, [
-			input.value === null
-				? db.delete(settings).where(at)
-				: db
-						.insert(settings)
-						.values({ scope, key: input.key, value })
-						.onConflictDoUpdate({
-							target: [settings.scope, settings.key],
-							set: { value },
-						}),
-			...eventInserts(db, who, new Date().toISOString(), [
-				{
-					entity: "setting",
-					entityId: scope,
-					field: input.key,
-					before,
-					after: input.value,
-				},
-			]),
-		]);
-	}
-	return ok(await resolve(db, scope));
+	return retryOnConflict(
+		async () => {
+			const [current] = await db.select().from(settings).where(at).limit(1);
+			const before = current
+				? (JSON.parse(current.value) as number | null)
+				: null;
+			if (before !== input.value) {
+				const value = JSON.stringify(input.value);
+				await writeAll(db, [
+					// 読んだ後に他の書き込みが入っていたら、一意制約か revision の trigger が batch ごと取り消す。
+					// events の before が、実際の直前の値とずれないようにするため
+					current
+						? db
+								.update(settings)
+								.set({ value, revision: current.revision + 1 })
+								.where(at)
+						: db.insert(settings).values({ scope, key: input.key, value }),
+					...eventInserts(db, who, new Date().toISOString(), [
+						{
+							entity: "setting",
+							entityId: scope,
+							field: input.key,
+							before,
+							after: input.value,
+						},
+					]),
+				]);
+			}
+			return ok(await resolve(db, scope));
+		},
+		() => fail(409, "conflict", "他の書き込みと重なった。もう一度試す"),
+	);
 };
