@@ -324,6 +324,12 @@ const change = (event: TaskEvent, names: Names): Markup => {
 		}
 		case "order_key":
 			return html`並びを変更`;
+		case "triaged_at":
+			return html`仕分け済みにした`;
+		case "relation": {
+			const kind = (after as { kind?: unknown } | null)?.kind;
+			return html`関係を付けた${typeof kind === "string" ? html`（${kind}）` : ""}`;
+		}
 		case "state":
 			return fromTo((v) => (isState(v) ? badge(v) : plain(v)));
 		case "assignee_id":

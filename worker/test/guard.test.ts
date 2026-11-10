@@ -95,6 +95,82 @@ describe("ログインで来た書き込みの Origin", () => {
 	});
 });
 
+describe("席の連携の書き込み", () => {
+	const setup = async () => {
+		const project = await newProject();
+		await call(owner, "POST", `/v1/projects/${project.id}/repos`, {
+			repo: "example/guard",
+		});
+		const parent = await newTask(project.id, { state: "todo" });
+		const found = await newTask(project.id, {}, working("yukarin"));
+		const started = await call(working("yukarin"), "POST", "/v1/runs", {
+			task_id: parent.id,
+			seat: "seat-1",
+		});
+		expect(started.status).toBe(201);
+		const run = await started.json<{ id: string }>();
+		const routes: [string, string, unknown][] = [
+			[
+				"POST",
+				`/v1/tasks/${found.id}/relations`,
+				{ kind: "follows", to_task: parent.id },
+			],
+			["POST", `/v1/tasks/${found.id}/triage`, undefined],
+			["POST", "/v1/runs", { task_id: parent.id, seat: "seat-2" }],
+			["POST", `/v1/runs/${run.id}/end`, undefined],
+			[
+				"PUT",
+				`/v1/settings/${project.id}`,
+				{ key: "max_self_todo_depth", value: 1 },
+			],
+		];
+		return { project, found, routes };
+	};
+
+	it("ログインで Origin が無ければ 403 で、何も書かない", async () => {
+		const { project, found, routes } = await setup();
+		const before = await eventsOf(found.id);
+		for (const [method, path, body] of routes) {
+			const res = await call(owner, method, path, body, { origin: null });
+			expect([path, res.status]).toEqual([path, 403]);
+			expect(await res.json()).toMatchObject({ error: "origin_mismatch" });
+		}
+		expect(await eventsOf(found.id)).toEqual(before);
+		const task = await (
+			await call(owner, "GET", `/v1/tasks/${found.id}`)
+		).json<TaskJson>();
+		expect(task.triaged_at).toBeNull();
+		const settings = await call(owner, "GET", `/v1/settings/${project.id}`);
+		expect(await settings.json()).toMatchObject({
+			settings: { max_self_todo_depth: { source: "default" } },
+		});
+	});
+
+	it("application/json でなければ、service token でも 415", async () => {
+		const { routes } = await setup();
+		for (const [method, path, body] of routes) {
+			for (const as of [owner, working("yukarin")]) {
+				const res = await call(as, method, path, body, {
+					"content-type": "text/plain",
+				});
+				expect([path, res.status]).toEqual([path, 415]);
+			}
+		}
+	});
+
+	it("自分の Origin のログインなら、owner の操作（仕分けと設定）が通る", async () => {
+		const { project, found } = await setup();
+		const triaged = await call(owner, "POST", `/v1/tasks/${found.id}/triage`);
+		expect(triaged.status).toBe(200);
+		expect((await triaged.json<TaskJson>()).triaged_at).not.toBeNull();
+		const put = await call(owner, "PUT", `/v1/settings/${project.id}`, {
+			key: "max_self_todo_depth",
+			value: 1,
+		});
+		expect(put.status).toBe(200);
+	});
+});
+
 describe("書き込みの Content-Type", () => {
 	it.each([
 		["無い", null],

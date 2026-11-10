@@ -1,17 +1,22 @@
 import * as v from "valibot";
 import type { Principal } from "./auth.ts";
 import type { Db } from "./db/client.ts";
-import { TASK_STATES } from "./db/schema.ts";
+import { RELATION_KINDS, TASK_STATES } from "./db/schema.ts";
 import { listTaskEvents } from "./history.ts";
 import { createProject, linkRepo, listProjects } from "./projects.ts";
+import { relateTasks } from "./relations.ts";
 import { type Failure, fail, type Result } from "./result.ts";
 import { listActors, listLabels } from "./roster.ts";
+import { endRun, startRun } from "./runs.ts";
+import { getSettings, putSetting, SETTING_KEYS } from "./settings.ts";
 import {
 	createTask,
 	getTask,
+	nextTask,
 	SEARCH_DEFAULT_LIMIT,
 	SEARCH_MAX_LIMIT,
 	searchTasks,
+	triageTask,
 	updateTask,
 } from "./tasks.ts";
 
@@ -48,6 +53,32 @@ const TaskInput = v.strictObject({
 	state: v.optional(v.picklist(["backlog", "todo"]), "backlog"),
 	assignee_id: v.optional(Id),
 	labels: v.optional(v.pipe(v.array(LabelName), v.maxLength(20)), []),
+	discovered_from: v.optional(
+		v.strictObject({ task_id: Id, run_id: v.optional(Id) }),
+	),
+});
+
+const RelationInput = v.strictObject({
+	kind: v.picklist(RELATION_KINDS),
+	to_task: Id,
+	run_id: v.optional(Id),
+});
+
+const RunInput = v.strictObject({
+	task_id: Id,
+	seat: Text(100),
+	model: v.optional(Text(100)),
+	// hishaku の番号は 4 桁
+	hishaku_no: v.optional(
+		v.pipe(v.number(), v.integer(), v.minValue(1000), v.maxValue(9999)),
+	),
+});
+
+const SettingInput = v.strictObject({
+	key: v.picklist(SETTING_KEYS),
+	value: v.nullable(
+		v.pipe(v.number(), v.integer(), v.minValue(0), v.maxValue(20)),
+	),
 });
 
 const TaskPatch = v.strictObject({
@@ -76,6 +107,12 @@ const TaskQuery = v.strictObject({
 	assignee_id: v.optional(Id),
 	parent_id: v.optional(Id),
 	label: v.optional(LabelName),
+	awaiting_triage: v.optional(
+		v.pipe(
+			v.picklist(["true", "false"]),
+			v.transform((s) => s === "true"),
+		),
+	),
 	limit: v.optional(
 		v.pipe(
 			v.string(),
@@ -179,6 +216,29 @@ export const handleRest = async (
 			return Response.json({ actors: await listActors(db) });
 		case "GET labels":
 			return Response.json({ labels: await listLabels(db) });
+		case "GET tasks/:id/next":
+			return respond(await nextTask(db, id));
+		case "POST tasks/:id/relations": {
+			const input = await body(request, RelationInput);
+			if (!input.ok) return failure(input.error);
+			return respond(await relateTasks(db, who, id, input.value));
+		}
+		case "POST tasks/:id/triage":
+			return respond(await triageTask(db, who, id));
+		case "POST runs": {
+			const input = await body(request, RunInput);
+			if (!input.ok) return failure(input.error);
+			return respond(await startRun(db, who, input.value), 201);
+		}
+		case "POST runs/:id/end":
+			return respond(await endRun(db, who, id));
+		case "GET settings/:id":
+			return respond(await getSettings(db, id));
+		case "PUT settings/:id": {
+			const input = await body(request, SettingInput);
+			if (!input.ok) return failure(input.error);
+			return respond(await putSetting(db, who, id, input.value));
+		}
 	}
 	return failure({ status: 404, code: "not_found", message: "入口が無い" });
 };

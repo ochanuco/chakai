@@ -1,4 +1,5 @@
-import { asc, eq } from "drizzle-orm";
+import { asc } from "drizzle-orm";
+import { isOwner } from "./actors.ts";
 import type { Principal } from "./auth.ts";
 import type { Db } from "./db/client.ts";
 import { actors, labels } from "./db/schema.ts";
@@ -32,12 +33,5 @@ export const listLabels = async (db: Db): Promise<Label[]> =>
  * owner 本人が Access にログインして来たリクエストか。
  * service token は、owner を名乗れる呼び出し元（Mac の道具）でも通さない
  */
-export const isOwnerLogin = async (db: Db, who: Principal) => {
-	if (who.callerId !== null) return false;
-	const [actor] = await db
-		.select({ role: actors.role })
-		.from(actors)
-		.where(eq(actors.id, who.actorId))
-		.limit(1);
-	return actor?.role === "owner";
-};
+export const isOwnerLogin = async (db: Db, who: Principal) =>
+	who.callerId === null && (await isOwner(db, who));
