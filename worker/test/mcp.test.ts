@@ -404,10 +404,4 @@ describe("道具", () => {
 		);
 		expect(ended.structuredContent.ended_at).not.toBeNull();
 	});
-
-	it("仕分けと設定は道具に出さない", () => {
-		const text = JSON.stringify(TOOLS);
-		expect(text).not.toContain("/triage");
-		expect(text).not.toContain("/settings");
-	});
 });

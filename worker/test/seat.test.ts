@@ -392,17 +392,20 @@ describe("AI が自分で作る todo の深さの上限", () => {
 	it("プロジェクトの上書きが global より先に効き、消すと global に戻る", async () => {
 		const project = await newProject();
 		const other = await newProject();
+		expect((await setDepth("global", 2)).status).toBe(200);
 		expect((await setDepth(project.id, 1)).status).toBe(200);
 
 		const parent = await newTask(project.id, { state: "todo" });
 		const first = await chain(project.id, parent.id, 1);
 		expect((await create(project.id, first, yukarin)).status).toBe(400);
-		// 他のプロジェクトは既定のまま
+		// 上書きの無いプロジェクトには global が効く
 		const elsewhere = await newTask(other.id, { state: "todo" });
-		await chain(other.id, elsewhere.id, 3);
+		const second = await chain(other.id, elsewhere.id, 2);
+		expect((await create(other.id, second, yukarin)).status).toBe(400);
 
 		expect((await setDepth(project.id, null)).status).toBe(200);
 		expect((await create(project.id, first, yukarin)).status).toBe(201);
+		expect((await setDepth("global", null)).status).toBe(200);
 	});
 });
 

@@ -39,7 +39,12 @@ export const relationsOf = async (db: Db, taskId: string) =>
 					eq(taskRelations.toTask, taskId),
 				),
 			)
-			.orderBy(taskRelations.createdAt)
+			.orderBy(
+				taskRelations.createdAt,
+				taskRelations.fromTask,
+				taskRelations.kind,
+				taskRelations.toTask,
+			)
 	).map(toRelation);
 
 export type RelationInput = {
