@@ -11,6 +11,7 @@ chakai は、owner 1 人と複数の AI を区別して扱うタスク台帳。C
 | `worker/src/rest.ts`      | REST。機能の正                                                   |
 | `worker/src/mcp.ts`       | MCP（Streamable HTTP）。道具を REST の入口へ写すだけの殻         |
 | `worker/src/auth.ts`      | Cloudflare Access の JWT から actor と呼び出し元を決める         |
+| `worker/src/ui/`          | owner の画面。サーバーで HTML を組み、書き込みは REST を呼ぶ     |
 | `worker/src/db/schema.ts` | D1 の schema（Drizzle）。`worker/migrations/` はここから生成する |
 
 Access のアプリと service token は `ochanuco/chabatake` が持ち、Worker・独自ドメイン・D1 はこの repo の `worker/wrangler.jsonc` が持つ。
@@ -44,17 +45,41 @@ actor の ID は名簿の名前（`owner`、`yukarin` など）で、それ以�
 | `POST /v1/tasks`              | 起票する（`project_id`、`title`、`body`、`parent_id`、`state`、`assignee_id`、`labels`）                 |
 | `GET /v1/tasks/:id`           | タスクを読む                                                                                             |
 | `PATCH /v1/tasks/:id`         | 更新する（`title`、`body`、`state`、`waiting_on`、`assignee_id`、`labels`、`order`）                     |
+| `GET /v1/tasks/:id/events`    | タスクの履歴を古い順に読む（誰が、どの呼び出し元から、何を、前の値と後の値）                             |
+| `GET /v1/actors`              | 名簿を読む（email は返さない）                                                                           |
+| `GET /v1/labels`              | ラベルの一覧                                                                                             |
 | `GET /health`                 | 疎通確認                                                                                                 |
 
 ## MCP
 
 `POST /mcp` で受ける。道具は `list_projects`、`create_project`、`link_repo`、`search_tasks`、`get_task`、`create_task`、`update_task`。使い方（起票の手順、状態を動かす時点、探し方）は、`initialize` が返す `instructions` に書いてある。
 
+## Web UI
+
+owner が Access にログインして `https://chakai.chanu.co/` を開く。service token の呼び出しと、owner 以外の人には 403 を返す。
+
+| 画面            | 中身                                                                                            |
+| --------------- | ----------------------------------------------------------------------------------------------- |
+| `/`             | owner の番（`review` のタスクを、プロジェクトをまたいで待たせている順に）と、プロジェクトの一覧 |
+| `/projects/:id` | タスクの親子ツリー。`?state=` で絞る（無ければ `done` と `dropped` を除き、`all` ですべて）     |
+| `/tasks/:id`    | 本文、子タスク、状態・担当・ラベルの変更、履歴                                                  |
+
+状態は一覧の各行でも変えられ、並びは行の ↑ と ↓ で、同じ親の隣のタスクと入れ替える。起票と、件名・本文の編集は画面に無い。
+
 ## 開発
 
 ```sh
 pnpm install
 pnpm run typecheck && pnpm run lint && pnpm test && pnpm run build
+```
+
+画面を手元で開くときは、手元の D1 に架空の名簿を入れてから `dev:ui` を使う。`dev:ui` の入口（`worker/scripts/dev-ui.ts`）は、Access の代わりに `owner@example.com` の JWT を署名して付ける。deploy する Worker には入らない。
+
+```sh
+cd worker
+pnpm run db:migrate:local
+OWNER_EMAIL=owner@example.com MAC_AGENT_CLIENT_ID=00000000000000000000000000000001.access pnpm run roster:init --local
+pnpm run dev:ui
 ```
 
 schema を変えたら migration を生成する。

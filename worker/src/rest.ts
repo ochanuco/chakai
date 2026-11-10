@@ -2,8 +2,10 @@ import * as v from "valibot";
 import type { Principal } from "./auth.ts";
 import type { Db } from "./db/client.ts";
 import { TASK_STATES } from "./db/schema.ts";
+import { listTaskEvents } from "./history.ts";
 import { createProject, linkRepo, listProjects } from "./projects.ts";
 import { type Failure, fail, type Result } from "./result.ts";
+import { listActors, listLabels } from "./roster.ts";
 import {
 	createTask,
 	getTask,
@@ -167,6 +169,16 @@ export const handleRest = async (
 			if (!input.ok) return failure(input.error);
 			return respond(await updateTask(db, who, id, input.value));
 		}
+		case "GET tasks/:id/events": {
+			const history = await listTaskEvents(db, id);
+			return history.ok
+				? Response.json({ events: history.value })
+				: failure(history.error);
+		}
+		case "GET actors":
+			return Response.json({ actors: await listActors(db) });
+		case "GET labels":
+			return Response.json({ labels: await listLabels(db) });
 	}
 	return failure({ status: 404, code: "not_found", message: "入口が無い" });
 };

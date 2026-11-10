@@ -6,6 +6,7 @@
 	"scripts": {
 		"postinstall": "wrangler types",
 		"dev": "wrangler dev",
+		"dev:ui": "wrangler dev scripts/dev-ui.ts",
 		"build": "wrangler deploy --dry-run --outdir dist",
 		"typecheck": "tsc",
 		"test": "vitest run",
