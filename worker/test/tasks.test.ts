@@ -256,6 +256,113 @@ describe("events", () => {
 	});
 });
 
+describe("件名と本文", () => {
+	it("直せて、項目ごとに events に残る", async () => {
+		const project = await newProject();
+		const task = await newTask(project.id, {
+			title: "古い件名",
+			body: "古い本文",
+		});
+		const res = await patch(
+			task.id,
+			{ title: " 新しい件名 ", body: "新しい本文\n2 行目" },
+			working("yukarin"),
+		);
+		expect(await res.json()).toMatchObject({
+			title: "新しい件名",
+			body: "新しい本文\n2 行目",
+		});
+		expect(
+			(await eventsOf(task.id))
+				.slice(1)
+				.map((e) => [e.field, e.before, e.after, e.actor_id]),
+		).toEqual([
+			["title", '"古い件名"', '"新しい件名"', "yukarin"],
+			["body", '"古い本文"', JSON.stringify("新しい本文\n2 行目"), "yukarin"],
+		]);
+		const emptied = await patch(task.id, { body: "" });
+		expect((await emptied.json<TaskJson & { body: string }>()).body).toBe("");
+	});
+
+	it("空の件名は 400", async () => {
+		const project = await newProject();
+		const task = await newTask(project.id);
+		expect((await patch(task.id, { title: "  " })).status).toBe(400);
+		expect((await patch(task.id, { title: null })).status).toBe(400);
+	});
+});
+
+describe("ラベルの名前", () => {
+	it("改行などの制御文字を含む名前は 400", async () => {
+		const project = await newProject();
+		const task = await newTask(project.id, { labels: ["a", "b"] });
+		for (const labels of [["a\nb"], ["tab\there"], ["nul\u0000"]]) {
+			expect((await patch(task.id, { labels })).status).toBe(400);
+			const res = await call(owner, "POST", "/v1/tasks", {
+				project_id: project.id,
+				title: "x",
+				labels,
+			});
+			expect(res.status).toBe(400);
+		}
+		expect(await eventsOf(task.id)).toHaveLength(1);
+	});
+
+	it("重複を除き、名前の順に並べる", async () => {
+		const project = await newProject();
+		const task = await newTask(project.id);
+		const res = await patch(task.id, { labels: ["b", "a", "b"] });
+		expect((await res.json<TaskJson>()).labels).toEqual(["a", "b"]);
+	});
+});
+
+describe("同時の更新", () => {
+	it("events の before が、直前の after とつながる", async () => {
+		const project = await newProject();
+		const task = await newTask(project.id);
+		const states = ["todo", "doing", "done", "dropped"];
+		const responses = await Promise.all(
+			states.map((state) => patch(task.id, { state })),
+		);
+		expect(responses.map((r) => r.status)).toEqual([200, 200, 200, 200]);
+		const events = (await eventsOf(task.id)).filter((e) => e.field === "state");
+		expect(events).toHaveLength(4);
+		let before = '"backlog"';
+		for (const e of events) {
+			expect(e.before).toBe(before);
+			before = e.after ?? "";
+		}
+		const res = await call(owner, "GET", `/v1/tasks/${task.id}`);
+		expect(JSON.stringify((await res.json<TaskJson>()).state)).toBe(before);
+	});
+
+	it("別の項目を同時に変えても、どちらも失われない", async () => {
+		const project = await newProject();
+		const task = await newTask(project.id);
+		await Promise.all([
+			patch(task.id, { title: "同時に直した件名" }),
+			patch(task.id, { assignee_id: "akarin" }),
+			patch(task.id, { labels: ["同時"] }),
+		]);
+		const res = await call(owner, "GET", `/v1/tasks/${task.id}`);
+		expect(await res.json()).toMatchObject({
+			title: "同時に直した件名",
+			assignee_id: "akarin",
+			labels: ["同時"],
+		});
+	});
+
+	it("読んだ後に変わっていたタスクへの書き込みを、DB が拒む", async () => {
+		const project = await newProject();
+		const task = await newTask(project.id);
+		await expect(
+			env.DB.prepare("UPDATE tasks SET state = 'done' WHERE id = ?")
+				.bind(task.id)
+				.run(),
+		).rejects.toThrow(/task changed since read/);
+	});
+});
+
 describe("並び（order_key）", () => {
 	it("起票した順にプロジェクトの末尾へ入る", async () => {
 		const project = await newProject();
@@ -381,6 +488,24 @@ describe("探す", () => {
 		};
 		expect(await ids("order_key")).toEqual([under.id]);
 		expect(await ids("100%")).toEqual([percent.id]);
+	});
+
+	it("state は重複を除くので、同じ状態をいくつ並べても探せる", async () => {
+		const project = await newProject();
+		const task = await newTask(project.id, { state: "todo" });
+		const state = Array.from({ length: 30 }, () => "todo").join(",");
+		const res = await call(
+			owner,
+			"GET",
+			`/v1/tasks?project_id=${project.id}&state=${state}`,
+		);
+		expect(res.status).toBe(200);
+		const { tasks } = await res.json<{ tasks: TaskJson[] }>();
+		expect(tasks.map((t) => t.id)).toEqual([task.id]);
+		const long = Array.from({ length: 150 }, () => "todo").join(",");
+		expect((await call(owner, "GET", `/v1/tasks?state=${long}`)).status).toBe(
+			400,
+		);
 	});
 
 	it("知らない条件は 400", async () => {

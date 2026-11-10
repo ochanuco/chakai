@@ -90,6 +90,7 @@ CREATE TABLE `tasks` (
 	`assignee_id` text,
 	`order_key` text NOT NULL,
 	`waiting_on` text,
+	`revision` integer DEFAULT 0 NOT NULL,
 	`created_by` text NOT NULL,
 	`created_at` text NOT NULL,
 	`updated_at` text NOT NULL,

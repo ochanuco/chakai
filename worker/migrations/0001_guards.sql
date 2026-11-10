@@ -14,3 +14,10 @@ CREATE TRIGGER `tasks_no_delete` BEFORE DELETE ON `tasks`
 BEGIN
 	SELECT RAISE(ABORT, 'tasks are never deleted');
 END;
+--> statement-breakpoint
+-- 更新は、読んだ時点の revision に 1 を足して書く。間に他の更新が入っていたら、履歴の before が実際とずれるので拒む
+CREATE TRIGGER `tasks_revision` BEFORE UPDATE ON `tasks`
+WHEN NEW.`revision` <> OLD.`revision` + 1
+BEGIN
+	SELECT RAISE(ABORT, 'task changed since read');
+END;

@@ -1,6 +1,6 @@
 {
-	"id": "4880cdcb-a076-4eec-b5c2-bea1556b55a5",
-	"prevId": "20b4e391-48be-43d6-906e-50b2d1480b11",
+	"id": "0209c025-d4f8-429a-8624-5c2b2cbf1b47",
+	"prevId": "020a30f7-c558-425c-af21-3d06cec35116",
 	"version": "6",
 	"dialect": "sqlite",
 	"tables": {
@@ -562,6 +562,14 @@
 					"primaryKey": false,
 					"notNull": false,
 					"autoincrement": false
+				},
+				"revision": {
+					"name": "revision",
+					"type": "integer",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false,
+					"default": 0
 				},
 				"created_by": {
 					"name": "created_by",

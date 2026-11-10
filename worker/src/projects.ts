@@ -2,7 +2,7 @@ import { asc, eq } from "drizzle-orm";
 import type { Principal } from "./auth.ts";
 import type { Db } from "./db/client.ts";
 import { events as eventsTable, projectRepos, projects } from "./db/schema.ts";
-import { writeAll } from "./db/write.ts";
+import { retryOnConflict, writeAll } from "./db/write.ts";
 import { eventRows } from "./events.ts";
 import { newId } from "./id.ts";
 import { fail, ok, type Result } from "./result.ts";
@@ -91,22 +91,26 @@ export const linkRepo = async (
 				.where(eq(projectRepos.projectId, projectId))
 				.orderBy(asc(projectRepos.repo))
 		).map((r) => r.repo);
-	const before = await linked();
-	if (before.includes(repo)) return ok(toProject(row, before));
-	await writeAll(db, [
-		db.insert(projectRepos).values({ projectId, repo }),
-		db.insert(eventsTable).values(
-			eventRows(who, new Date().toISOString(), [
-				{
-					entity: "project",
-					entityId: projectId,
-					field: "repos",
-					after: repo,
-				},
-			]),
-		),
-	]);
-	return ok(toProject(row, await linked()));
+	const link = async () => {
+		const before = await linked();
+		if (before.includes(repo)) return before;
+		await writeAll(db, [
+			db.insert(projectRepos).values({ projectId, repo }),
+			db.insert(eventsTable).values(
+				eventRows(who, new Date().toISOString(), [
+					{
+						entity: "project",
+						entityId: projectId,
+						field: "repos",
+						after: repo,
+					},
+				]),
+			),
+		]);
+		return linked();
+	};
+	// 同じ repo を同時に紐付けると片方が一意制約で弾かれる。読み直せば、もう紐付いている
+	return ok(toProject(row, await retryOnConflict(link, linked)));
 };
 
 export const projectExists = async (db: Db, id: string) =>

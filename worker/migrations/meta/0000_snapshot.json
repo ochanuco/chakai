@@ -1,7 +1,7 @@
 {
 	"version": "6",
 	"dialect": "sqlite",
-	"id": "20b4e391-48be-43d6-906e-50b2d1480b11",
+	"id": "020a30f7-c558-425c-af21-3d06cec35116",
 	"prevId": "00000000-0000-0000-0000-000000000000",
 	"tables": {
 		"actor_external_ids": {
@@ -562,6 +562,14 @@
 					"primaryKey": false,
 					"notNull": false,
 					"autoincrement": false
+				},
+				"revision": {
+					"name": "revision",
+					"type": "integer",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false,
+					"default": 0
 				},
 				"created_by": {
 					"name": "created_by",

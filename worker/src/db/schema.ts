@@ -100,6 +100,8 @@ export const tasks = sqliteTable(
 		assigneeId: text("assignee_id").references(() => actors.id),
 		orderKey: text("order_key").notNull(),
 		waitingOn: text("waiting_on"),
+		// 更新のたびに 1 ずつ増える。同時の更新を見つけるために使う（migration の trigger）
+		revision: integer("revision").notNull().default(0),
 		createdBy: text("created_by")
 			.notNull()
 			.references(() => actors.id),

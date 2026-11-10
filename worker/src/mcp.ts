@@ -126,6 +126,8 @@ export const TOOLS: {
 				state: {
 					type: "array",
 					items: { type: "string", enum: TASK_STATES },
+					uniqueItems: true,
+					maxItems: TASK_STATES.length,
 					description: "どれかに当たる状態",
 				},
 				assignee_id: id,
@@ -189,11 +191,13 @@ export const TOOLS: {
 		name: "update_task",
 		title: "タスクを更新する",
 		description:
-			"タスクの状態、並び、ラベル、担当、waiting_on を変える。渡した項目だけが変わる。review（owner の番）にするときは、waiting_on に owner へ仰ぐ内容を一言で書く。review を出ると waiting_on は空になる。やめたタスクは消さずに dropped にする。labels は渡した一覧に置き換わる。",
+			"タスクの件名、本文、状態、並び、ラベル、担当、waiting_on を変える。渡した項目だけが変わる。review（owner の番）にするときは、waiting_on に owner へ仰ぐ内容を一言で書く。review を出ると waiting_on は空になる。やめたタスクは消さずに dropped にする。labels は渡した一覧に置き換わる。",
 		inputSchema: {
 			type: "object",
 			properties: {
 				task_id: id,
+				title: { type: "string", minLength: 1, maxLength: 500 },
+				body: { type: "string", maxLength: 100000 },
 				state: { type: "string", enum: TASK_STATES },
 				waiting_on: { type: ["string", "null"], maxLength: 1000 },
 				assignee_id: { type: ["string", "null"], maxLength: 64 },

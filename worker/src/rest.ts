@@ -18,7 +18,8 @@ export type RestContext = { db: Db; who: Principal };
 const Text = (max: number) =>
 	v.pipe(v.string(), v.trim(), v.minLength(1), v.maxLength(max));
 const Id = v.pipe(v.string(), v.minLength(1), v.maxLength(64));
-const LabelName = Text(64);
+// 制御文字（改行など）の入った名前は、一覧や履歴で別の名前と見分けられなくなる
+const LabelName = v.pipe(Text(64), v.regex(/^\P{Cc}+$/u));
 const State = v.picklist(TASK_STATES);
 
 const ProjectInput = v.strictObject({
@@ -27,7 +28,14 @@ const ProjectInput = v.strictObject({
 });
 
 const RepoInput = v.strictObject({
-	repo: v.pipe(v.string(), v.regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/)),
+	// GitHub の owner（39 文字まで、英数字とハイフン）と repo の名前（100 文字まで）の形
+	repo: v.pipe(
+		v.string(),
+		v.maxLength(140),
+		v.regex(
+			/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?\/(?!\.{1,2}$)[A-Za-z0-9._-]{1,100}$/,
+		),
+	),
 });
 
 const TaskInput = v.strictObject({
@@ -41,6 +49,8 @@ const TaskInput = v.strictObject({
 });
 
 const TaskPatch = v.strictObject({
+	title: v.optional(Text(500)),
+	body: v.optional(v.pipe(v.string(), v.maxLength(100000))),
 	state: v.optional(State),
 	waiting_on: v.optional(v.nullable(Text(1000))),
 	assignee_id: v.optional(v.nullable(Id)),
@@ -56,7 +66,8 @@ const TaskQuery = v.strictObject({
 	state: v.optional(
 		v.pipe(
 			v.string(),
-			v.transform((s) => s.split(",")),
+			v.maxLength(200),
+			v.transform((s) => [...new Set(s.split(","))]),
 			v.array(State),
 		),
 	),

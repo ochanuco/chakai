@@ -169,6 +169,7 @@ describe("道具", () => {
 			"update_task",
 			{
 				task_id: task.id,
+				title: "mcp で直した件名",
 				state: "review",
 				waiting_on: "進め方を決めてほしい",
 				order: { before: anchor.id },
@@ -178,6 +179,7 @@ describe("道具", () => {
 		expect(updated.isError).toBeUndefined();
 		const got = await tool<TaskJson>("get_task", { task_id: task.id });
 		expect(got.structuredContent).toMatchObject({
+			title: "mcp で直した件名",
 			state: "review",
 			waiting_on: "進め方を決めてほしい",
 			labels: ["mcp"],
@@ -187,6 +189,7 @@ describe("道具", () => {
 		const events = await eventsOf(task.id);
 		expect(events.map((e) => e.field)).toEqual([
 			"created",
+			"title",
 			"state",
 			"waiting_on",
 			"order_key",

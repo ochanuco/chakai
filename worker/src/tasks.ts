@@ -182,6 +182,9 @@ const labelChanges = (created: { id: string; name: string }[]): Change[] =>
 		after: { id: l.id, name: l.name },
 	}));
 
+const busy = () =>
+	fail(409, "conflict", "他の書き込みと重なった。もう一度試す");
+
 export type CreateTaskInput = {
 	project_id: string;
 	title: string;
@@ -229,6 +232,7 @@ export const createTask = async (
 			assigneeId: input.assignee_id ?? null,
 			orderKey: generateKeyBetween(last?.orderKey ?? null, null),
 			waitingOn: null,
+			revision: 0,
 			createdBy: who.actorId,
 			createdAt: now,
 			updatedAt: now,
@@ -253,10 +257,12 @@ export const createTask = async (
 				),
 		]);
 		return ok(task);
-	});
+	}, busy);
 };
 
 export type UpdateTaskInput = {
+	title?: string;
+	body?: string;
 	state?: TaskState;
 	waiting_on?: string | null;
 	assignee_id?: string | null;
@@ -357,11 +363,17 @@ export const updateTask = async (
 				changes.push({ entity: "task", entityId: id, field, before, after });
 			}
 		};
+		const title = input.title ?? current.title;
+		const body = input.body ?? current.body;
+		change("title", current.title, title);
+		change("body", current.body, body);
 		change("state", current.state, state);
 		change("waiting_on", current.waitingOn, waitingOn);
 		change("assignee_id", current.assigneeId, assigneeId);
 		change("order_key", current.orderKey, orderKey);
-		const labelsChanged = nextLabels.join("\n") !== currentLabels.join("\n");
+		const labelsChanged =
+			nextLabels.length !== currentLabels.length ||
+			nextLabels.some((name, i) => name !== currentLabels[i]);
 		if (labelsChanged) {
 			changes.push({
 				entity: "task",
@@ -376,21 +388,23 @@ export const updateTask = async (
 		const now = new Date().toISOString();
 		const next: TaskRow = {
 			...current,
+			title,
+			body,
 			state,
 			waitingOn,
 			assigneeId,
 			orderKey,
 			updatedAt: now,
+			revision: current.revision + 1,
 		};
 		const { idByName, created } = labelsChanged
 			? await resolveLabels(db, nextLabels)
 			: { idByName: new Map<string, string>(), created: [] };
 		await writeAll(db, [
 			...labelWrites(db, created),
-			db
-				.update(tasks)
-				.set({ state, waitingOn, assigneeId, orderKey, updatedAt: now })
-				.where(eq(tasks.id, id)),
+			// 読んだ後に他の更新が入っていたら、trigger が revision の飛びを見つけて batch ごと取り消す。
+			// events の before が、実際の直前の値とずれないようにするため
+			db.update(tasks).set(next).where(eq(tasks.id, id)),
 			...(labelsChanged
 				? [
 						db.delete(taskLabels).where(eq(taskLabels.taskId, id)),
@@ -406,5 +420,5 @@ export const updateTask = async (
 				.values(eventRows(who, now, [...labelChanges(created), ...changes])),
 		]);
 		return ok(toTask(next, nextLabels));
-	});
+	}, busy);
 };

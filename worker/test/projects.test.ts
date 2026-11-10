@@ -53,6 +53,48 @@ describe("プロジェクト", () => {
 		);
 	});
 
+	it("同じ repo を同時に紐付けても、どれも成功し events は 1 行", async () => {
+		const project = await newProject();
+		const responses = await Promise.all(
+			Array.from({ length: 4 }, () =>
+				call(owner, "POST", `/v1/projects/${project.id}/repos`, {
+					repo: "example/concurrent",
+				}),
+			),
+		);
+		for (const res of responses) {
+			expect(res.status).toBe(200);
+			expect((await res.json<ProjectJson>()).repos).toEqual([
+				"example/concurrent",
+			]);
+		}
+		expect(
+			(await eventsOf(project.id)).filter((e) => e.field === "repos"),
+		).toHaveLength(1);
+	});
+
+	it("GitHub の owner/name の形に合わない repo は 400", async () => {
+		const project = await newProject();
+		const link = (repo: string) =>
+			call(owner, "POST", `/v1/projects/${project.id}/repos`, { repo });
+		for (const repo of [
+			`${"a".repeat(40)}/app`,
+			`example/${"a".repeat(101)}`,
+			"-example/app",
+			"example-/app",
+			"exa_mple/app",
+			"example/..",
+			"example/app/extra",
+			"example/",
+		]) {
+			expect((await link(repo)).status).toBe(400);
+		}
+		const longest = `${"a".repeat(39)}/${"b".repeat(100)}`;
+		for (const repo of [longest, "ex-ample/.github", "example/a_b.c-d"]) {
+			expect((await link(repo)).status).toBe(200);
+		}
+	});
+
 	it("owner/name の形でない repo は 400、無いプロジェクトは 404", async () => {
 		const project = await newProject();
 		const bad = await call(owner, "POST", `/v1/projects/${project.id}/repos`, {
