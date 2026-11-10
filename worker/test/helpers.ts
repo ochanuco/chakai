@@ -109,7 +109,16 @@ export type TaskJson = {
 	order_key: string;
 	waiting_on: string | null;
 	created_by: string;
+	triaged_at: string | null;
 	labels: string[];
+};
+
+export type RelationJson = {
+	from_task: string;
+	kind: string;
+	to_task: string;
+	run_id: string | null;
+	created_by: string;
 };
 
 let seq = 0;
