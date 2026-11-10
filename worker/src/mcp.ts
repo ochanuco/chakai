@@ -9,6 +9,7 @@ export const PROTOCOL_VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26"];
 const SERVER_INFO = { name: "chakai", version: "1.0.0" };
 
 // 手順（いつ、どの順に呼ぶか）はここに、引数の意味と拒まれる条件は道具の description に書く。
+// 「起票の前に探す」だけは、instructions を読まないクライアントにも届くよう create_task にも書く。
 // 長い instructions を途中で切るクライアントがあるので、短く保つ
 export const INSTRUCTIONS = `chakai は owner と複数の AI を区別するタスク台帳。誰として記録されるかは呼び出し元で決まる。
 
@@ -213,7 +214,7 @@ export const TOOLS: {
 		name: "create_task",
 		title: "タスクを起票する",
 		description:
-			"タスクを起票する。state の既定は backlog。並びはプロジェクトの末尾に入る。",
+			"タスクを起票する。起票の前に search_tasks で似たタスクを探す。state の既定は backlog。並びはプロジェクトの末尾に入る。",
 		inputSchema: {
 			type: "object",
 			properties: {
