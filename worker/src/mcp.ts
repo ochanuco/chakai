@@ -1,5 +1,5 @@
 import * as v from "valibot";
-import { TASK_STATES } from "./db/schema.ts";
+import { RELATION_KINDS, TASK_STATES } from "./db/schema.ts";
 import { handleRest, type RestContext } from "./rest.ts";
 import { SEARCH_DEFAULT_LIMIT, SEARCH_MAX_LIMIT } from "./tasks.ts";
 
@@ -19,7 +19,7 @@ export const INSTRUCTIONS = `chakai は owner と複数の AI を区別するタ
 3. create_task で作る。state は渡さず backlog にする。owner が「すぐやる」と言ったものだけ todo にする。
 4. title は、それだけで何をするかが分かる 1 文にする。body には、起きていること、終わったと言える条件、関係するファイルや URL を書く。会話の経緯は書かない。
 
-作業中に、頼まれた範囲の外の課題を見つけたら、その場で直さず、関係するプロジェクトの backlog に起票する。body に、どの作業中に見つけたかを 1 行書く。
+作業中に、頼まれた範囲の外の課題を見つけたら、その場で直さず、関係するプロジェクトの backlog に起票する。create_task の discovered_from に、作業中のタスクを渡す。
 
 ## 状態を動かす
 update_task の state を、その時点で変える。あとでまとめて直さない。
@@ -28,7 +28,11 @@ update_task の state を、その時点で変える。あとでまとめて直�
 - 終わった: done
 - やめた: dropped（タスクは消せない）
 - backlog を todo に上げるのは、owner が着手を認めたときだけ。
-- 大きすぎて分けるときは、create_task の parent_id に今のタスクを渡して子を作る。今のタスクは doing のまま残す。
+
+## 途中で分ける
+- 大きすぎた（範囲は同じ）: create_task の parent_id に今のタスクを渡し、子を todo で作る。今のタスクは doing のまま残す。深さの上限で拒まれたら、backlog で作るか、今のタスクを review にする。
+- 途中まで終わり、区切れる: 残りを新しいタスクにし、relate_tasks で新しいタスクから今のタスクへ follows を付けてから、今のタスクを done にする。
+- 方針が変わり、作り直す: 新しいタスクを作り、relate_tasks で今のタスクから新しいタスクへ replaced_by を付けてから、今のタスクを dropped にする。
 
 ## 探す
 - 次にやるもの: search_tasks を project_id と state: ["todo"] で呼ぶ。返る順が並び順なので、先頭が次のタスク。
@@ -182,6 +186,11 @@ export const TOOLS: {
 				assignee_id: id,
 				parent_id: { ...id, description: "この親の直下の子だけ" },
 				label: { type: "string", minLength: 1, maxLength: 64 },
+				awaiting_triage: {
+					type: "boolean",
+					description:
+						"true なら仕分け待ち（AI が起票し、owner がまだ扱いを決めていない backlog）だけ",
+				},
 				limit: {
 					type: "integer",
 					minimum: 1,
@@ -197,7 +206,8 @@ export const TOOLS: {
 	{
 		name: "get_task",
 		title: "タスクを読む",
-		description: "ID のタスクを、ラベルと一緒に返す。",
+		description:
+			"ID のタスクを、ラベルと、他のタスクとの関係（relations。このタスクが from か to のもの）と一緒に返す。",
 		inputSchema: {
 			type: "object",
 			properties: { task_id: id },
@@ -214,7 +224,7 @@ export const TOOLS: {
 		name: "create_task",
 		title: "タスクを起票する",
 		description:
-			"タスクを起票する。起票の前に search_tasks で似たタスクを探す。state の既定は backlog。並びはプロジェクトの末尾に入る。",
+			"タスクを起票する。起票の前に search_tasks で似たタスクを探す。state の既定は backlog。並びはプロジェクトの末尾に入る。AI が親の下に todo で作れる深さには上限があり、超えると拒まれる（backlog では作れる）。",
 		inputSchema: {
 			type: "object",
 			properties: {
@@ -229,6 +239,14 @@ export const TOOLS: {
 				},
 				assignee_id: { ...id, description: "担当の actor の ID" },
 				labels,
+				discovered_from: {
+					type: "object",
+					description:
+						"このタスクを見つけたときに作業していたタスク。席の run が分かれば run_id も渡す",
+					properties: { task_id: id, run_id: id },
+					required: ["task_id"],
+					additionalProperties: false,
+				},
 			},
 			required: ["project_id", "title"],
 			additionalProperties: false,
@@ -279,6 +297,87 @@ export const TOOLS: {
 			method: "PATCH",
 			path: `/v1/tasks/${segment(args, "task_id")}`,
 			body: without(args, "task_id"),
+		}),
+	},
+	{
+		name: "relate_tasks",
+		title: "タスク同士をつなぐ",
+		description:
+			"「from_task が kind で to_task」と読める向きに関係を付ける。discovered_from は見つけたタスクから作業していたタスクへ、follows は続きのタスクから区切ったタスクへ、replaced_by はやめたタスクから作り直したタスクへ。run_id は discovered_from にだけ付けられる。",
+		inputSchema: {
+			type: "object",
+			properties: {
+				from_task: id,
+				kind: { type: "string", enum: RELATION_KINDS },
+				to_task: id,
+				run_id: id,
+			},
+			required: ["from_task", "kind", "to_task"],
+			additionalProperties: false,
+		},
+		annotations: { ...WRITE, idempotentHint: true },
+		rest: (args) => ({
+			method: "POST",
+			path: `/v1/tasks/${segment(args, "from_task")}/relations`,
+			body: without(args, "from_task"),
+		}),
+	},
+	{
+		name: "next_task",
+		title: "親タスクの次の todo を返す",
+		description:
+			"席を回す側のコードが呼ぶ。親タスクの子孫のうち、木の順（深さ優先、同じ親の中は並び順）で最初の todo を task に返す。無ければ task は null。descendant_states は子孫の状態ごとの数。状態は変えない。",
+		inputSchema: {
+			type: "object",
+			properties: { task_id: { ...id, description: "席に渡した親タスク" } },
+			required: ["task_id"],
+			additionalProperties: false,
+		},
+		annotations: READ,
+		rest: (args) => ({
+			method: "GET",
+			path: `/v1/tasks/${segment(args, "task_id")}/next`,
+		}),
+	},
+	{
+		name: "start_run",
+		title: "席の実行記録を始める",
+		description:
+			"席を回す側のコードが呼ぶ。親タスクを席に渡した記録を作る。actor は呼び出し元の名乗りで決まる。repo の無いプロジェクトのタスクは拒む。",
+		inputSchema: {
+			type: "object",
+			properties: {
+				task_id: { ...id, description: "席に渡す親タスク" },
+				seat: { type: "string", minLength: 1, maxLength: 100 },
+				model: { type: "string", minLength: 1, maxLength: 100 },
+				hishaku_no: {
+					type: "integer",
+					minimum: 1000,
+					maximum: 9999,
+					description: "hishaku に預けたセッションの番号",
+				},
+			},
+			required: ["task_id", "seat"],
+			additionalProperties: false,
+		},
+		annotations: WRITE,
+		rest: (args) => ({ method: "POST", path: "/v1/runs", body: args }),
+	},
+	{
+		name: "end_run",
+		title: "席の実行記録を閉じる",
+		description:
+			"席を回す側のコードが呼ぶ。席を解放したときに run を閉じる。閉じた run をもう一度閉じても変わらない。",
+		inputSchema: {
+			type: "object",
+			properties: { run_id: id },
+			required: ["run_id"],
+			additionalProperties: false,
+		},
+		annotations: { ...WRITE, idempotentHint: true },
+		rest: (args) => ({
+			method: "POST",
+			path: `/v1/runs/${segment(args, "run_id")}/end`,
 		}),
 	},
 ];

@@ -107,6 +107,7 @@ export const tasks = sqliteTable(
 			.references(() => actors.id),
 		createdAt: text("created_at").notNull(),
 		updatedAt: text("updated_at").notNull(),
+		triagedAt: text("triaged_at"),
 	},
 	(t) => [
 		uniqueIndex("tasks_project_order").on(t.projectId, t.orderKey),
@@ -131,6 +132,67 @@ export const taskLabels = sqliteTable(
 			.references(() => labels.id),
 	},
 	(t) => [primaryKey({ columns: [t.taskId, t.labelId] })],
+);
+
+export const runs = sqliteTable(
+	"runs",
+	{
+		id: text("id").primaryKey(),
+		taskId: text("task_id")
+			.notNull()
+			.references(() => tasks.id),
+		actorId: text("actor_id")
+			.notNull()
+			.references(() => actors.id),
+		seat: text("seat").notNull(),
+		model: text("model"),
+		hishakuNo: integer("hishaku_no"),
+		startedAt: text("started_at").notNull(),
+		endedAt: text("ended_at"),
+	},
+	(t) => [index("runs_task").on(t.taskId)],
+);
+
+export const RELATION_KINDS = [
+	"discovered_from",
+	"follows",
+	"replaced_by",
+] as const;
+export type RelationKind = (typeof RELATION_KINDS)[number];
+
+// 「from_task が kind で to_task」と読む。discovered_from と follows は新しいタスクから元のタスクへ、
+// replaced_by は古いタスクから新しいタスクへ向く
+export const taskRelations = sqliteTable(
+	"task_relations",
+	{
+		fromTask: text("from_task")
+			.notNull()
+			.references(() => tasks.id),
+		kind: text("kind", { enum: RELATION_KINDS }).notNull(),
+		toTask: text("to_task")
+			.notNull()
+			.references(() => tasks.id),
+		runId: text("run_id").references(() => runs.id),
+		createdBy: text("created_by")
+			.notNull()
+			.references(() => actors.id),
+		createdAt: text("created_at").notNull(),
+	},
+	(t) => [
+		primaryKey({ columns: [t.fromTask, t.kind, t.toTask] }),
+		index("task_relations_to").on(t.toTask),
+	],
+);
+
+// scope は global かプロジェクトの ID。value は JSON
+export const settings = sqliteTable(
+	"settings",
+	{
+		scope: text("scope").notNull(),
+		key: text("key").notNull(),
+		value: text("value").notNull(),
+	},
+	(t) => [primaryKey({ columns: [t.scope, t.key] })],
 );
 
 export const events = sqliteTable(

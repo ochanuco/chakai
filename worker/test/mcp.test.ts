@@ -76,6 +76,10 @@ describe("POST /mcp", () => {
 			'state: ["todo"]',
 			"labels は渡した一覧に置き換わる",
 			"get_task で今のラベルを読み",
+			"子を todo で作る",
+			"follows を付けてから",
+			"replaced_by を付けてから",
+			"discovered_from に、作業中のタスクを渡す",
 		]) {
 			expect(text).toContain(part);
 		}
@@ -83,12 +87,21 @@ describe("POST /mcp", () => {
 		expect(text.length).toBeLessThanOrEqual(1500);
 		const names = TOOLS.map((t) => t.name);
 		for (const name of text.match(/[a-z]+_[a-z]+/g) ?? []) {
-			if (["waiting_on", "parent_id", "project_id"].includes(name)) continue;
+			if (
+				[
+					"waiting_on",
+					"parent_id",
+					"project_id",
+					"discovered_from",
+					"replaced_by",
+				].includes(name)
+			)
+				continue;
 			expect(names).toContain(name);
 		}
 	});
 
-	it("tools/list は 7 つの道具を返し、create_task は先に探すよう書いてある", async () => {
+	it("tools/list は 11 の道具を返し、create_task は先に探すよう書いてある", async () => {
 		const res = await rpc("tools/list");
 		const tools = res.result?.tools as {
 			name: string;
@@ -103,13 +116,17 @@ describe("POST /mcp", () => {
 			"get_task",
 			"create_task",
 			"update_task",
+			"relate_tasks",
+			"next_task",
+			"start_run",
+			"end_run",
 		]);
 		expect(tools.find((t) => t.name === "create_task")?.description).toContain(
 			"起票の前に search_tasks で似たタスクを探す",
 		);
 		expect(
 			tools.filter((t) => t.annotations.readOnlyHint).map((t) => t.name),
-		).toEqual(["list_projects", "search_tasks", "get_task"]);
+		).toEqual(["list_projects", "search_tasks", "get_task", "next_task"]);
 		expect(tools[0]).not.toHaveProperty("rest");
 	});
 
@@ -302,5 +319,95 @@ describe("道具", () => {
 			method: "tools/list",
 		});
 		expect(res.status).toBe(403);
+	});
+
+	it("席の道具が REST の入口へ写る（run、next_task、関係、仕分け待ちの絞り込み）", async () => {
+		const project = await tool<{ id: string }>("create_project", {
+			name: "mcp-seat",
+		});
+		const projectId = project.structuredContent.id;
+		await tool("link_repo", { project_id: projectId, repo: "example/seat" });
+		const parent = await tool<TaskJson>("create_task", {
+			project_id: projectId,
+			title: "親",
+			state: "todo",
+		});
+		const parentId = parent.structuredContent.id;
+		const yukarin = working("yukarin");
+
+		const run = await tool<{ id: string; actor_id: string }>(
+			"start_run",
+			{ task_id: parentId, seat: "seat-1", model: "model-x", hishaku_no: 1234 },
+			yukarin,
+		);
+		expect(run.structuredContent.actor_id).toBe("yukarin");
+
+		const child = await tool<TaskJson>(
+			"create_task",
+			{
+				project_id: projectId,
+				title: "子",
+				parent_id: parentId,
+				state: "todo",
+			},
+			yukarin,
+		);
+		const next = await tool<{ task: TaskJson | null }>(
+			"next_task",
+			{ task_id: parentId },
+			yukarin,
+		);
+		expect(next.structuredContent.task?.id).toBe(child.structuredContent.id);
+
+		const found = await tool<TaskJson & { relations: unknown[] }>(
+			"create_task",
+			{
+				project_id: projectId,
+				title: "範囲外の発見",
+				discovered_from: {
+					task_id: child.structuredContent.id,
+					run_id: run.structuredContent.id,
+				},
+			},
+			yukarin,
+		);
+		const awaiting = await tool<{ tasks: TaskJson[] }>("search_tasks", {
+			project_id: projectId,
+			awaiting_triage: true,
+		});
+		expect(awaiting.structuredContent.tasks.map((t) => t.id)).toEqual([
+			found.structuredContent.id,
+		]);
+
+		const related = await tool<{ kind: string }>(
+			"relate_tasks",
+			{
+				from_task: found.structuredContent.id,
+				kind: "follows",
+				to_task: child.structuredContent.id,
+			},
+			yukarin,
+		);
+		expect(related.structuredContent.kind).toBe("follows");
+		const read = await tool<{ relations: { kind: string }[] }>("get_task", {
+			task_id: found.structuredContent.id,
+		});
+		expect(read.structuredContent.relations.map((r) => r.kind)).toEqual([
+			"discovered_from",
+			"follows",
+		]);
+
+		const ended = await tool<{ ended_at: string | null }>(
+			"end_run",
+			{ run_id: run.structuredContent.id },
+			yukarin,
+		);
+		expect(ended.structuredContent.ended_at).not.toBeNull();
+	});
+
+	it("仕分けと設定は道具に出さない", () => {
+		const text = JSON.stringify(TOOLS);
+		expect(text).not.toContain("/triage");
+		expect(text).not.toContain("/settings");
 	});
 });

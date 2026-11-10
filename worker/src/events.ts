@@ -4,7 +4,7 @@ import { events } from "./db/schema.ts";
 import { newId } from "./id.ts";
 
 export type Change = {
-	entity: "project" | "task" | "label";
+	entity: "project" | "task" | "label" | "run" | "setting";
 	entityId: string;
 	field: string;
 	before?: unknown;
