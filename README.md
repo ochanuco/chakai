@@ -48,7 +48,7 @@ actor の ID は名簿の名前（`owner`、`yukarin` など）で、それ以�
 
 ## MCP
 
-`POST /mcp` で受ける。道具は `list_projects`、`create_project`、`link_repo`、`search_tasks`、`get_task`、`create_task`、`update_task`。起票の前に `search_tasks` で似たタスクを探す。
+`POST /mcp` で受ける。道具は `list_projects`、`create_project`、`link_repo`、`search_tasks`、`get_task`、`create_task`、`update_task`。使い方（起票の手順、状態を動かす時点、探し方）は、`initialize` が返す `instructions` に書いてある。
 
 ## 開発
 
@@ -77,10 +77,26 @@ pnpm run roster:init --remote
 
 `--remote` は本番の D1 に書くので、`wrangler login` か `CLOUDFLARE_API_TOKEN` が要る。手元の D1 で試すときは、`pnpm run db:migrate:local` の後に `--local` で流す。
 
+## 名簿に呼び出し元を足す
+
+service token を使う呼び出し元を足すときは、名前、Client ID、名乗ってよい actor の一覧、既定の actor を環境変数で渡す。`CALLER_ACTORS` は `名前` か `名前:runtime` をカンマで並べる。一覧の actor が名簿に無ければ、kind `agent`・role `member` で作る。`CALLER_DEFAULT_ACTOR` を渡さなければ、既定の actor の無い（必ず `X-Actor` で名乗る）呼び出し元になる。
+
+mizuya の Working を足す例。`yukarin` と `akarin` を名乗れて、既定の actor は無い。
+
+```sh
+cd worker
+CALLER_NAME='mizuya-working' \
+CALLER_CLIENT_ID="$(op read 'op://chabatake-services/mizuya-working/cf_access_chakai_client_id')" \
+CALLER_ACTORS='yukarin:claude-cli,akarin:codex-cli' \
+pnpm run roster:add-caller --remote
+```
+
+足した行はすべて `events` に、`owner` の操作として残す。そのため、先に `roster:init` で `owner` を入れておく。もう入っている行（同じ Client ID の呼び出し元、同じ名前の actor）は変えないので、何度流してもよい。後から actor を増やすときは、増やした一覧で流し直す。
+
 ## デプロイ
 
 `deploy` workflow を手動（`workflow_dispatch`）で実行する。Environment `production` の承認の後に、`worker/scripts/deploy.sh` が未適用の D1 migration を当ててから `wrangler deploy` する。migration の前後で `worker/scripts/d1-guard.mjs` がテーブルの行数を比べ、行が減ったテーブルか、行が入ったまま消えたテーブルがあれば、Worker を出さずに止める。意図した削除や改名は、migration に `-- deploy: allow-row-loss <table>` と書いて宣言する。ロールバックは、main 上のコミット SHA を指定して実行する。
 
 認証情報は Environment `production` の secret `OP_SA_DEPLOY` から 1Password の `gh-deploy/cloudflare-workers` を読む（`.github/deploy/production.env.op`）。
 
-初めて出すときは、デプロイで migration が当たった後に、上の手順で名簿を入れる。
+初めて出すときは、デプロイで migration が当たった後に、`roster:init` で名簿を入れる。

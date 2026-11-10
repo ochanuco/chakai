@@ -11,7 +11,8 @@
 		"test": "vitest run",
 		"db:generate": "drizzle-kit generate",
 		"db:migrate:local": "wrangler d1 migrations apply chakai --local",
-		"roster:init": "node scripts/roster-init.ts"
+		"roster:init": "node scripts/roster-init.ts",
+		"roster:add-caller": "node scripts/roster-add-caller.ts"
 	},
 	"dependencies": {
 		"drizzle-orm": "^0.45.4",

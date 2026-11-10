@@ -8,6 +8,37 @@ export const PROTOCOL_VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26"];
 
 const SERVER_INFO = { name: "chakai", version: "1.0.0" };
 
+// 手順（いつ、どの順に呼ぶか）はここに、引数の意味と拒まれる条件は道具の description に書く。
+// 「起票の前に探す」だけは、instructions を読まないクライアントにも届くよう create_task にも書く。
+// 長い instructions を途中で切るクライアントがあるので、短く保つ
+export const INSTRUCTIONS = `chakai は owner と複数の AI を区別するタスク台帳。誰として記録されるかは呼び出し元で決まる。
+
+## 起票する
+1. list_projects でプロジェクトを決める。合うものが無ければ、owner に確かめてから create_project で作る。repo が決まっていれば link_repo で紐付ける。
+2. search_tasks を q 付きで呼び、似たタスクが無いかを確かめる。chakai は重複を判定しない。似たものがあれば、新しく作らずそれを示す。
+3. create_task で作る。state は渡さず backlog にする。owner が「すぐやる」と言ったものだけ todo にする。
+4. title は、それだけで何をするかが分かる 1 文にする。body には、起きていること、終わったと言える条件、関係するファイルや URL を書く。会話の経緯は書かない。
+
+作業中に、頼まれた範囲の外の課題を見つけたら、その場で直さず、関係するプロジェクトの backlog に起票する。body に、どの作業中に見つけたかを 1 行書く。
+
+## 状態を動かす
+update_task の state を、その時点で変える。あとでまとめて直さない。
+- 着手する: doing
+- owner の判断が要る: review（waiting_on に仰ぐ内容を一言で）
+- 終わった: done
+- やめた: dropped（タスクは消せない）
+- backlog を todo に上げるのは、owner が着手を認めたときだけ。
+- 大きすぎて分けるときは、create_task の parent_id に今のタスクを渡して子を作る。今のタスクは doing のまま残す。
+
+## 探す
+- 次にやるもの: search_tasks を project_id と state: ["todo"] で呼ぶ。返る順が並び順なので、先頭が次のタスク。
+- owner の番のもの: state: ["review"]。
+- 並びを変える: update_task の order。
+
+## 書き方
+- labels は渡した一覧に置き換わる。足すときは、get_task で今のラベルを読み、足した一覧を渡す。
+- タスクや actor の ID を、owner への報告にそのまま並べない。件名で示す。`;
+
 const Message = v.object({
 	jsonrpc: v.literal("2.0"),
 	id: v.optional(v.nullable(v.union([v.string(), v.number()]))),
@@ -135,7 +166,7 @@ export const TOOLS: {
 		name: "search_tasks",
 		title: "タスクを探す",
 		description:
-			"条件に合うタスクを、プロジェクト内の並び（order_key）の順に返す。q は件名と本文に含む語。起票の前に、似たタスクが無いかをこれで探す。",
+			"条件に合うタスクを、プロジェクト内の並び（order_key）の順に返す。q は件名と本文に含む語。",
 		inputSchema: {
 			type: "object",
 			properties: {
@@ -183,7 +214,7 @@ export const TOOLS: {
 		name: "create_task",
 		title: "タスクを起票する",
 		description:
-			"タスクを起票する。起票の前に search_tasks で似たタスクを探す（chakai は重複を判定しない）。state の既定は backlog で、着手してよいと決まっているものだけ todo にする。並びはプロジェクトの末尾に入る。",
+			"タスクを起票する。起票の前に search_tasks で似たタスクを探す。state の既定は backlog。並びはプロジェクトの末尾に入る。",
 		inputSchema: {
 			type: "object",
 			properties: {
@@ -209,7 +240,7 @@ export const TOOLS: {
 		name: "update_task",
 		title: "タスクを更新する",
 		description:
-			"タスクの件名、本文、状態、並び、ラベル、担当、waiting_on を変える。渡した項目だけが変わる。review（owner の番）にするときは、waiting_on に owner へ仰ぐ内容を一言で書く。review を出ると waiting_on は空になる。やめたタスクは消さずに dropped にする。labels は渡した一覧に置き換わる。",
+			"タスクの件名、本文、状態、並び、ラベル、担当、waiting_on を変える。渡した項目だけが変わる。review（owner の番）にするときは waiting_on が要り、review を出ると waiting_on は空になる。",
 		inputSchema: {
 			type: "object",
 			properties: {
@@ -319,8 +350,7 @@ const dispatch = async (
 					protocolVersion: version,
 					capabilities: { tools: { listChanged: false } },
 					serverInfo: SERVER_INFO,
-					instructions:
-						"chakai は owner と AI を区別するタスク台帳。起票の前に search_tasks で似たタスクを探し、着手と完了で update_task を使って状態を動かす。",
+					instructions: INSTRUCTIONS,
 				},
 			};
 		}

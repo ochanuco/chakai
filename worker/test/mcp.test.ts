@@ -1,4 +1,5 @@
 import { beforeAll, describe, expect, it } from "vitest";
+import { TOOLS } from "../src/mcp.ts";
 import {
 	type As,
 	BASE,
@@ -61,6 +62,30 @@ describe("POST /mcp", () => {
 		});
 		const unknown = await rpc("initialize", { protocolVersion: "1999-01-01" });
 		expect(unknown.result?.protocolVersion).toBe("2025-11-25");
+	});
+
+	it("initialize の instructions だけで使い方が分かり、道具の名前は実在するものだけ", async () => {
+		const res = await rpc("initialize", { protocolVersion: "2025-06-18" });
+		const text = res.result?.instructions as string;
+		for (const part of [
+			"誰として記録されるかは呼び出し元で決まる",
+			"似たタスクが無いかを確かめる",
+			"state は渡さず backlog にする",
+			"範囲の外の課題",
+			"着手する: doing",
+			'state: ["todo"]',
+			"labels は渡した一覧に置き換わる",
+			"get_task で今のラベルを読み",
+		]) {
+			expect(text).toContain(part);
+		}
+		// 長い instructions を途中で切るクライアントがある
+		expect(text.length).toBeLessThanOrEqual(1500);
+		const names = TOOLS.map((t) => t.name);
+		for (const name of text.match(/[a-z]+_[a-z]+/g) ?? []) {
+			if (["waiting_on", "parent_id", "project_id"].includes(name)) continue;
+			expect(names).toContain(name);
+		}
 	});
 
 	it("tools/list は 7 つの道具を返し、create_task は先に探すよう書いてある", async () => {
