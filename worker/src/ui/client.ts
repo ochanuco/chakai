@@ -1,6 +1,6 @@
 /**
- * 画面の書き込みは、この script が既存の REST（PATCH /v1/tasks/:id）を呼んで行う。
- * HTML の form は PATCH も JSON も送れないので、ここだけ script にしている
+ * 画面の書き込みは、この script が既存の REST を呼んで行う。
+ * HTML の form は PATCH も PUT も JSON も送れないので、ここだけ script にしている
  */
 export const CLIENT_JS = `"use strict";
 (() => {
@@ -11,13 +11,14 @@ export const CLIENT_JS = `"use strict";
 		alertBox.scrollIntoView({ block: "nearest" });
 	};
 
-	const patch = async (id, body) => {
+	// 本文の無い書き込みも、REST は Content-Type が JSON のものだけを受ける
+	const send = async (method, path, body) => {
 		let res;
 		try {
-			res = await fetch("/v1/tasks/" + encodeURIComponent(id), {
-				method: "PATCH",
+			res = await fetch(path, {
+				method,
 				headers: { "content-type": "application/json" },
-				body: JSON.stringify(body),
+				body: body === undefined ? undefined : JSON.stringify(body),
 			});
 		} catch {
 			showError("通信できなかった。ページを読み直して、もう一度試す");
@@ -35,6 +36,9 @@ export const CLIENT_JS = `"use strict";
 		showError(message);
 		return false;
 	};
+
+	const taskPath = (id) => "/v1/tasks/" + encodeURIComponent(id);
+	const patch = (id, body) => send("PATCH", taskPath(id), body);
 
 	document.addEventListener("change", async (event) => {
 		const select = event.target;
@@ -66,6 +70,51 @@ export const CLIENT_JS = `"use strict";
 			order: { [button.dataset.dir]: button.dataset.anchor },
 		});
 		if (!moved) button.disabled = false;
+	});
+
+	document.addEventListener("click", async (event) => {
+		if (!(event.target instanceof Element)) return;
+		const button = event.target.closest("button[data-triage]");
+		if (!button) return;
+		const id = button.dataset.triage;
+		const action = button.dataset.action;
+		const siblings = button.parentElement.querySelectorAll("button");
+		for (const b of siblings) b.disabled = true;
+		const done =
+			action === "keep"
+				? await send("POST", taskPath(id) + "/triage")
+				: await patch(id, { state: action });
+		if (!done) for (const b of siblings) b.disabled = false;
+	});
+
+	const putSetting = async (form, value) => {
+		const buttons = form.querySelectorAll("button");
+		for (const b of buttons) b.disabled = true;
+		const saved = await send(
+			"PUT",
+			"/v1/settings/" + encodeURIComponent(form.dataset.settingScope),
+			{ key: form.dataset.key, value },
+		);
+		if (!saved) for (const b of buttons) b.disabled = false;
+	};
+
+	document.addEventListener("submit", (event) => {
+		const form = event.target;
+		if (!(form instanceof HTMLFormElement) || !form.dataset.settingScope) return;
+		event.preventDefault();
+		// 空の欄を 0 として書かないよう、数として読めたときだけ送る
+		const value = form.elements.namedItem("value").valueAsNumber;
+		if (!Number.isInteger(value) || value < 0 || value > 20) {
+			showError("0 から 20 の整数を入れる");
+			return;
+		}
+		putSetting(form, value);
+	});
+
+	document.addEventListener("click", (event) => {
+		if (!(event.target instanceof Element)) return;
+		const button = event.target.closest("button[data-setting-reset]");
+		if (button) putSetting(button.closest("form"), null);
 	});
 
 	const form = document.getElementById("edit");

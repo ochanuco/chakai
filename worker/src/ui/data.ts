@@ -1,14 +1,21 @@
-import { asc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "../db/client.ts";
 import {
 	labels,
 	projectRepos,
 	projects,
+	type RelationKind,
+	runs,
 	type TaskState,
 	taskLabels,
+	taskRelations,
 	tasks,
 } from "../db/schema.ts";
 import { chunked, reviewSince } from "../history.ts";
+import { relationsOf } from "../relations.ts";
+import { listRuns, type Run } from "../runs.ts";
+import { type Settings, settingsOfScopes } from "../settings.ts";
+import { awaitingTriage } from "../tasks.ts";
 
 export type TaskRow = typeof tasks.$inferSelect & { labels: string[] };
 export type ProjectRow = typeof projects.$inferSelect;
@@ -75,6 +82,77 @@ export const loadReviews = async (db: Db): Promise<ReviewRow[]> => {
 		.sort((a, b) => (a.since < b.since ? -1 : a.since > b.since ? 1 : 0));
 };
 
+export const countTriage = async (db: Db) =>
+	(
+		await db
+			.select({ count: sql<number>`count(*)` })
+			.from(tasks)
+			.where(awaitingTriage(db))
+	)[0]?.count ?? 0;
+
+export type TriageRow = TaskRow & {
+	/** どのタスクの作業中に見つけたか。席は、見つけた run が分かるときだけ */
+	discoveredFrom: { id: string; title: string; seat: string | null }[];
+};
+
+/** 仕分け待ちのタスクを、起票の古い順にすべて返す */
+export const loadTriage = async (db: Db): Promise<TriageRow[]> => {
+	const rows = await db
+		.select()
+		.from(tasks)
+		.where(awaitingTriage(db))
+		.orderBy(asc(tasks.createdAt), asc(tasks.id));
+	const ids = rows.map((r) => r.id);
+	const found = new Map<string, TriageRow["discoveredFrom"]>();
+	for (const chunk of chunked(ids)) {
+		const origins = await db
+			.select({
+				from: taskRelations.fromTask,
+				id: tasks.id,
+				title: tasks.title,
+				seat: runs.seat,
+			})
+			.from(taskRelations)
+			.innerJoin(tasks, eq(tasks.id, taskRelations.toTask))
+			.leftJoin(runs, eq(runs.id, taskRelations.runId))
+			.where(
+				and(
+					eq(taskRelations.kind, "discovered_from"),
+					inArray(taskRelations.fromTask, chunk),
+				),
+			)
+			.orderBy(asc(taskRelations.createdAt), asc(taskRelations.toTask));
+		for (const { from, ...origin } of origins) {
+			found.set(from, [...(found.get(from) ?? []), origin]);
+		}
+	}
+	return withLabels(rows, await labelPairs(db, ids)).map((r) => ({
+		...r,
+		discoveredFrom: found.get(r.id) ?? [],
+	}));
+};
+
+export type SettingsView = {
+	global: Settings;
+	projects: { project: ProjectRow; settings: Settings }[];
+};
+
+export const loadSettings = async (db: Db): Promise<SettingsView> => {
+	const all = await loadProjects(db);
+	const resolved = await settingsOfScopes(
+		db,
+		all.map((p) => p.id),
+	);
+	const byScope = new Map(resolved.projects.map((s) => [s.scope, s]));
+	return {
+		global: resolved.global,
+		projects: all.flatMap((project) => {
+			const settings = byScope.get(project.id);
+			return settings ? [{ project, settings }] : [];
+		}),
+	};
+};
+
 export type ProjectView = {
 	project: ProjectRow;
 	repos: string[];
@@ -125,6 +203,53 @@ export type TaskView = {
 	ancestors: { id: string; title: string }[];
 	children: TaskRow[];
 	reviewSince: string | null;
+	relations: RelatedTask[];
+	runs: Run[];
+};
+
+export type RelatedTask = {
+	kind: RelationKind;
+	/** このタスクが from_task の側か */
+	outgoing: boolean;
+	task: { id: string; title: string; state: TaskState };
+	seat: string | null;
+};
+
+const loadRelations = async (db: Db, taskId: string) => {
+	const relations = await relationsOf(db, taskId);
+	const other = (r: (typeof relations)[number]) =>
+		r.from_task === taskId ? r.to_task : r.from_task;
+	const byId = new Map<string, RelatedTask["task"]>();
+	for (const ids of chunked([...new Set(relations.map(other))])) {
+		for (const t of await db
+			.select({ id: tasks.id, title: tasks.title, state: tasks.state })
+			.from(tasks)
+			.where(inArray(tasks.id, ids))) {
+			byId.set(t.id, t);
+		}
+	}
+	const seats = new Map<string, string>();
+	const runIds = relations.flatMap((r) => (r.run_id ? [r.run_id] : []));
+	for (const ids of chunked([...new Set(runIds)])) {
+		for (const r of await db
+			.select({ id: runs.id, seat: runs.seat })
+			.from(runs)
+			.where(inArray(runs.id, ids))) {
+			seats.set(r.id, r.seat);
+		}
+	}
+	return relations.flatMap((r): RelatedTask[] => {
+		const task = byId.get(other(r));
+		if (!task) return [];
+		return [
+			{
+				kind: r.kind,
+				outgoing: r.from_task === taskId,
+				task,
+				seat: (r.run_id && seats.get(r.run_id)) || null,
+			},
+		];
+	});
 };
 
 export const loadTask = async (
@@ -170,11 +295,17 @@ export const loadTask = async (
 		await labelPairs(db, [row.id, ...childRows.map((c) => c.id)]),
 	);
 	if (!task) return null;
+	const [relations, ran] = await Promise.all([
+		loadRelations(db, taskId),
+		listRuns(db, taskId),
+	]);
 	return {
 		task,
 		project,
 		ancestors,
 		children,
+		relations,
+		runs: ran.ok ? ran.value : [],
 		reviewSince:
 			row.state === "review"
 				? ((await reviewSince(db, [row.id])).get(row.id) ?? null)
