@@ -74,6 +74,7 @@ describe("POST /mcp", () => {
 			"範囲の外の課題",
 			"着手する: doing",
 			'state: ["todo"]',
+			"labels は渡した一覧に置き換わる",
 			"get_task で今のラベルを読み",
 		]) {
 			expect(text).toContain(part);
@@ -87,7 +88,7 @@ describe("POST /mcp", () => {
 		}
 	});
 
-	it("tools/list は 7 つの道具を返し、create_task は先に探すよう書いてある", async () => {
+	it("tools/list は 7 つの道具を返す", async () => {
 		const res = await rpc("tools/list");
 		const tools = res.result?.tools as {
 			name: string;
@@ -103,9 +104,6 @@ describe("POST /mcp", () => {
 			"create_task",
 			"update_task",
 		]);
-		expect(tools.find((t) => t.name === "create_task")?.description).toContain(
-			"起票の前に search_tasks で似たタスクを探す",
-		);
 		expect(
 			tools.filter((t) => t.annotations.readOnlyHint).map((t) => t.name),
 		).toEqual(["list_projects", "search_tasks", "get_task"]);

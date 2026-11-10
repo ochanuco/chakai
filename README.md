@@ -99,4 +99,4 @@ pnpm run roster:add-caller --remote
 
 認証情報は Environment `production` の secret `OP_SA_DEPLOY` から 1Password の `gh-deploy/cloudflare-workers` を読む（`.github/deploy/production.env.op`）。
 
-初めて出すときは、デプロイで migration が当たった後に、上の手順で名簿を入れる。
+初めて出すときは、デプロイで migration が当たった後に、`roster:init` で名簿を入れる。

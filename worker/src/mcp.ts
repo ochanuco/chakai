@@ -35,7 +35,7 @@ update_task の state を、その時点で変える。あとでまとめて直�
 - 並びを変える: update_task の order。
 
 ## 書き方
-- labels を足すときは、get_task で今のラベルを読み、足した一覧を渡す。
+- labels は渡した一覧に置き換わる。足すときは、get_task で今のラベルを読み、足した一覧を渡す。
 - タスクや actor の ID を、owner への報告にそのまま並べない。件名で示す。`;
 
 const Message = v.object({
@@ -213,7 +213,7 @@ export const TOOLS: {
 		name: "create_task",
 		title: "タスクを起票する",
 		description:
-			"タスクを起票する。起票の前に search_tasks で似たタスクを探す。state の既定は backlog。並びはプロジェクトの末尾に入る。",
+			"タスクを起票する。state の既定は backlog。並びはプロジェクトの末尾に入る。",
 		inputSchema: {
 			type: "object",
 			properties: {
@@ -239,7 +239,7 @@ export const TOOLS: {
 		name: "update_task",
 		title: "タスクを更新する",
 		description:
-			"タスクの件名、本文、状態、並び、ラベル、担当、waiting_on を変える。渡した項目だけが変わる。review（owner の番）にするときは waiting_on が要り、review を出ると waiting_on は空になる。labels は渡した一覧に置き換わる。",
+			"タスクの件名、本文、状態、並び、ラベル、担当、waiting_on を変える。渡した項目だけが変わる。review（owner の番）にするときは waiting_on が要り、review を出ると waiting_on は空になる。",
 		inputSchema: {
 			type: "object",
 			properties: {
