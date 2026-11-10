@@ -38,7 +38,25 @@ const labels = {
 	maxItems: 20,
 };
 
-const segment = (value: unknown) => encodeURIComponent(String(value ?? ""));
+class InvalidArguments extends Error {}
+
+/**
+ * パスに埋める ID。REST の入力の検証を通らないので、ここで確かめる。
+ * 空や `.` を通すと、パスが別の入口（タスクの一覧など）を指してしまう
+ */
+const segment = (args: Args, key: string) => {
+	const value = args[key];
+	if (
+		typeof value !== "string" ||
+		value.length < 1 ||
+		value.length > 64 ||
+		value === "." ||
+		value === ".."
+	) {
+		throw new InvalidArguments(`${key}: 1〜64 文字の ID が要る`);
+	}
+	return encodeURIComponent(value);
+};
 
 const without = (args: Args, key: string) => {
 	const { [key]: _, ...rest } = args;
@@ -55,7 +73,7 @@ const query = (args: Args) => {
 	return text ? `?${text}` : "";
 };
 
-/** 道具は REST の入口への写しだけを持つ。入力の検証と処理は REST 側にある */
+/** 道具は REST の入口への写しだけを持つ。パスに埋める ID のほかは、入力の検証も処理も REST 側にある */
 export const TOOLS: {
 	name: string;
 	title: string;
@@ -109,7 +127,7 @@ export const TOOLS: {
 		annotations: { ...WRITE, idempotentHint: true },
 		rest: (args) => ({
 			method: "POST",
-			path: `/v1/projects/${segment(args.project_id)}/repos`,
+			path: `/v1/projects/${segment(args, "project_id")}/repos`,
 			body: without(args, "project_id"),
 		}),
 	},
@@ -158,7 +176,7 @@ export const TOOLS: {
 		annotations: READ,
 		rest: (args) => ({
 			method: "GET",
-			path: `/v1/tasks/${segment(args.task_id)}`,
+			path: `/v1/tasks/${segment(args, "task_id")}`,
 		}),
 	},
 	{
@@ -228,7 +246,7 @@ export const TOOLS: {
 		annotations: WRITE,
 		rest: (args) => ({
 			method: "PATCH",
-			path: `/v1/tasks/${segment(args.task_id)}`,
+			path: `/v1/tasks/${segment(args, "task_id")}`,
 			body: without(args, "task_id"),
 		}),
 	},
@@ -252,7 +270,24 @@ const callTool = async (
 	if (typeof args !== "object" || args === null || Array.isArray(args)) {
 		return { error: { code: -32602, message: "arguments が object ではない" } };
 	}
-	const call = tool.rest(args as Args);
+	const toolResult = (
+		structured: Record<string, unknown>,
+		isError: boolean,
+	) => ({
+		result: {
+			content: [{ type: "text", text: JSON.stringify(structured, null, 2) }],
+			structuredContent: structured,
+			...(isError ? { isError: true } : {}),
+		},
+	});
+	let call: RestCall;
+	try {
+		call = tool.rest(args as Args);
+	} catch (e) {
+		if (!(e instanceof InvalidArguments)) throw e;
+		// REST が入力を拒んだときと同じ形で返す
+		return toolResult({ error: "invalid_input", message: e.message }, true);
+	}
 	const response = await handleRest(
 		new Request(new URL(call.path, request.url), {
 			method: call.method,
@@ -260,14 +295,10 @@ const callTool = async (
 		}),
 		context,
 	);
-	const structured = await response.json<Record<string, unknown>>();
-	return {
-		result: {
-			content: [{ type: "text", text: JSON.stringify(structured, null, 2) }],
-			structuredContent: structured,
-			...(response.ok ? {} : { isError: true }),
-		},
-	};
+	return toolResult(
+		await response.json<Record<string, unknown>>(),
+		!response.ok,
+	);
 };
 
 const dispatch = async (

@@ -221,6 +221,55 @@ describe("道具", () => {
 		expect(invalid.structuredContent.error).toBe("invalid_input");
 	});
 
+	it("パスに埋める ID が無い・文字列でない・. のときは、REST に届く前に isError で返す", async () => {
+		const project = await newProject();
+		await newTask(project.id);
+		const calls: [string, Record<string, unknown>][] = [
+			["get_task", {}],
+			["get_task", { task_id: "" }],
+			["get_task", { task_id: null }],
+			["get_task", { task_id: 1 }],
+			["get_task", { task_id: ".." }],
+			["get_task", { task_id: "." }],
+			["get_task", { task_id: "a".repeat(65) }],
+			["update_task", { state: "done" }],
+			["update_task", { task_id: ["x"], state: "done" }],
+			["link_repo", { repo: "example/app" }],
+			["link_repo", { project_id: "", repo: "example/app" }],
+		];
+		for (const [name, args] of calls) {
+			const result = await tool<{ error: string; tasks?: unknown }>(name, args);
+			expect(result.isError).toBe(true);
+			expect(result.structuredContent.error).toBe("invalid_input");
+			expect(result.structuredContent.tasks).toBeUndefined();
+		}
+	});
+
+	it("ID に / や ? が入っていても、別の入口には届かない", async () => {
+		for (const task_id of ["a/b", "x?project_id=y", "%2e%2e", "../projects"]) {
+			const result = await tool<{ error: string }>("get_task", { task_id });
+			expect(result).toMatchObject({
+				isError: true,
+				structuredContent: { error: "task_not_found" },
+			});
+		}
+	});
+
+	it("必須の引数が無い起票と、知らない引数は isError で返す", async () => {
+		const project = await newProject();
+		for (const [name, args] of [
+			["create_task", { title: "x" }],
+			["create_project", {}],
+			["create_task", { project_id: project.id, title: "x", extra: 1 }],
+			["search_tasks", { unknown: "x" }],
+			["search_tasks", { state: ["archived"] }],
+		] as [string, Record<string, unknown>][]) {
+			const result = await tool<{ error: string }>(name, args);
+			expect(result.isError).toBe(true);
+			expect(result.structuredContent.error).toBe("invalid_input");
+		}
+	});
+
 	it("許可されない名乗りは、道具に届く前に 403", async () => {
 		const res = await call(working("owner"), "POST", "/mcp", {
 			jsonrpc: "2.0",

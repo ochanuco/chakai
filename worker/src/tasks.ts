@@ -16,14 +16,13 @@ import type { Principal } from "./auth.ts";
 import type { Db } from "./db/client.ts";
 import {
 	actors,
-	events as eventsTable,
 	labels,
 	type TaskState,
 	taskLabels,
 	tasks,
 } from "./db/schema.ts";
 import { retryOnConflict, writeAll } from "./db/write.ts";
-import { type Change, eventRows } from "./events.ts";
+import { type Change, eventInserts } from "./events.ts";
 import { newId } from "./id.ts";
 import { projectExists } from "./projects.ts";
 import { fail, ok, type Result } from "./result.ts";
@@ -247,14 +246,10 @@ export const createTask = async (
 					.insert(taskLabels)
 					.values({ taskId: row.id, labelId: idByName.get(name) ?? "" }),
 			),
-			db
-				.insert(eventsTable)
-				.values(
-					eventRows(who, now, [
-						...labelChanges(created),
-						{ entity: "task", entityId: row.id, field: "created", after: task },
-					]),
-				),
+			...eventInserts(db, who, now, [
+				...labelChanges(created),
+				{ entity: "task", entityId: row.id, field: "created", after: task },
+			]),
 		]);
 		return ok(task);
 	}, busy);
@@ -415,9 +410,7 @@ export const updateTask = async (
 						),
 					]
 				: []),
-			db
-				.insert(eventsTable)
-				.values(eventRows(who, now, [...labelChanges(created), ...changes])),
+			...eventInserts(db, who, now, [...labelChanges(created), ...changes]),
 		]);
 		return ok(toTask(next, nextLabels));
 	}, busy);

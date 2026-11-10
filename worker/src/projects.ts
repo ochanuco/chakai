@@ -1,9 +1,9 @@
 import { asc, eq } from "drizzle-orm";
 import type { Principal } from "./auth.ts";
 import type { Db } from "./db/client.ts";
-import { events as eventsTable, projectRepos, projects } from "./db/schema.ts";
+import { projectRepos, projects } from "./db/schema.ts";
 import { retryOnConflict, writeAll } from "./db/write.ts";
-import { eventRows } from "./events.ts";
+import { eventInserts } from "./events.ts";
 import { newId } from "./id.ts";
 import { fail, ok, type Result } from "./result.ts";
 
@@ -57,16 +57,14 @@ export const createProject = async (
 	const project = toProject(row, []);
 	await writeAll(db, [
 		db.insert(projects).values(row),
-		db.insert(eventsTable).values(
-			eventRows(who, row.createdAt, [
-				{
-					entity: "project",
-					entityId: row.id,
-					field: "created",
-					after: project,
-				},
-			]),
-		),
+		...eventInserts(db, who, row.createdAt, [
+			{
+				entity: "project",
+				entityId: row.id,
+				field: "created",
+				after: project,
+			},
+		]),
 	]);
 	return project;
 };
@@ -96,16 +94,14 @@ export const linkRepo = async (
 		if (before.includes(repo)) return before;
 		await writeAll(db, [
 			db.insert(projectRepos).values({ projectId, repo }),
-			db.insert(eventsTable).values(
-				eventRows(who, new Date().toISOString(), [
-					{
-						entity: "project",
-						entityId: projectId,
-						field: "repos",
-						after: repo,
-					},
-				]),
-			),
+			...eventInserts(db, who, new Date().toISOString(), [
+				{
+					entity: "project",
+					entityId: projectId,
+					field: "repos",
+					after: repo,
+				},
+			]),
 		]);
 		return linked();
 	};

@@ -226,6 +226,42 @@ describe("events", () => {
 		expect(created.results).toEqual([{ actor_id: "owner" }]);
 	});
 
+	it("新しいラベルが上限の 20 個あっても、起票と更新の events をすべて残す", async () => {
+		const project = await newProject();
+		const tag = crypto.randomUUID();
+		const names = (prefix: string) =>
+			Array.from({ length: 20 }, (_, i) => `${tag}-${prefix}-${i}`);
+		const first = names("起票");
+		const task = await newTask(project.id, { labels: first });
+		expect(task.labels).toEqual([...first].sort());
+		const second = names("更新");
+		const res = await patch(task.id, {
+			title: "件名",
+			body: "本文",
+			state: "review",
+			waiting_on: "見てほしい",
+			assignee_id: "akarin",
+			labels: second,
+		});
+		expect(res.status).toBe(200);
+		expect((await res.json<TaskJson>()).labels).toEqual([...second].sort());
+		expect((await eventsOf(task.id)).map((e) => e.field)).toEqual([
+			"created",
+			"title",
+			"body",
+			"state",
+			"waiting_on",
+			"assignee_id",
+			"labels",
+		]);
+		const created = await env.DB.prepare(
+			"SELECT count(*) AS n FROM events e JOIN labels l ON l.id = e.entity_id WHERE e.entity = 'label' AND e.field = 'created' AND l.name LIKE ?",
+		)
+			.bind(`${tag}-%`)
+			.first<{ n: number }>();
+		expect(created?.n).toBe(40);
+	});
+
 	it("失敗した更新は、タスクも events も変えない", async () => {
 		const project = await newProject();
 		const task = await newTask(project.id);
