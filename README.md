@@ -32,7 +32,7 @@ actor の ID は名簿の名前（`owner`、`yukarin` など）で、それ以�
 - `order_key` はプロジェクト内の並びを表す fractional index。起票すると末尾に入り、更新の `order` で他のタスクの直前・直後に動かす。
 - 書き込みはすべて `events` に追記する（`actor_id`、`caller_id`、`field`、`before`、`after`）。`events` は更新も削除もできない。
 - 子が `done` か `dropped` になり、同じ親の子がすべて `done` か `dropped` になったら、`todo` か `doing` の親を `review` にする（`waiting_on` は「子タスクがすべて片付いた」）。履歴には、きっかけになった操作の actor と呼び出し元で残す。親は自動では `done` にしない。
-- agent が親の下に `todo` でタスクを作るとき、作るタスクから上へ agent が作ったタスクが続く数（作るタスク自身を含む）が `max_self_todo_depth` を超えると拒む。人が作ったタスクで数え直す。`backlog` で作るのは通す。
+- agent が親の下に `todo` でタスクを作るとき、作るタスクから上へ agent が作ったタスクが続く数（作るタスク自身を含む）が `max_self_todo_depth` を超えると拒む。人が作ったタスクと、席に渡したことのあるタスク（`runs` に行がある）で数え直す。`backlog` で作るのは通すが、agent がそれを `todo` に上げるときにも同じ上限が掛かる。
 - 仕分け待ちは、agent が起票した `backlog` で `triaged_at` が空のタスク。owner が状態を変えるか、`backlog` に残すと決めると `triaged_at` が入る。
 - タスク同士の関係は「`from_task` が `kind` で `to_task`」と読む。`discovered_from`（見つけたタスク → 作業していたタスク）、`follows`（続きのタスク → 区切ったタスク）、`replaced_by`（やめたタスク → 作り直したタスク）。
 - 同じタスクへの更新が重なったら、後から書く側が読み直してやり直す。`tasks.revision` は更新のたびに 1 増え、読んだ時点から進んでいる書き込みは D1 の trigger が拒む。

@@ -230,22 +230,52 @@ export type CreateTaskInput = {
 };
 
 /**
- * 親から上へ、agent が作ったタスクが続く数。人が作ったタスクで止まる。
+ * start から上へ、agent が作ったタスクが続く数。人が作ったタスクと、席に渡したことのあるタスク
+ * （runs に行がある）で止まる。席に渡した親を深さ 0 とするため。
  * 上限を超えたかどうかだけが要るので、cap より先は数えない
  */
-const agentChainAbove = async (db: Db, parentId: string, cap: number) => {
+const agentChainFrom = async (db: Db, start: string, cap: number) => {
 	const [row] = await db.all<{ n: number }>(sql`
-		WITH RECURSIVE up(parent_id, kind, depth) AS (
-			SELECT t.parent_id, a.kind, 1 FROM tasks t
-				JOIN actors a ON a.id = t.created_by WHERE t.id = ${parentId}
+		WITH RECURSIVE up(parent_id, counted, depth) AS (
+			SELECT t.parent_id, ${countedInChain}, 1 FROM tasks t
+				JOIN actors a ON a.id = t.created_by WHERE t.id = ${start}
 			UNION ALL
-			SELECT t.parent_id, a.kind, up.depth + 1 FROM up
+			SELECT t.parent_id, ${countedInChain}, up.depth + 1 FROM up
 				JOIN tasks t ON t.id = up.parent_id
 				JOIN actors a ON a.id = t.created_by
-				WHERE up.kind = 'agent' AND up.depth < ${cap}
+				WHERE up.counted AND up.depth < ${cap}
 		)
-		SELECT count(*) AS n FROM up WHERE kind = 'agent'`);
+		SELECT count(*) AS n FROM up WHERE counted`);
 	return row?.n ?? 0;
+};
+
+const countedInChain = sql`(
+	a.kind = 'agent' AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.task_id = t.id)
+)`;
+
+/**
+ * agent が親の下のタスクを todo にしてよいかを確かめる。
+ * self は todo にするタスクで、これから作るタスクなら null（作るタスク自身を 1 と数える）
+ */
+const checkSelfTodoDepth = async (
+	db: Db,
+	who: Principal,
+	projectId: string,
+	parentId: string,
+	self: string | null,
+): Promise<Result<null>> => {
+	if ((await findActor(db, who.actorId))?.kind !== "agent") return ok(null);
+	const limit = await settingFor(db, projectId, "max_self_todo_depth");
+	const depth = self
+		? await agentChainFrom(db, self, limit + 1)
+		: 1 + (await agentChainFrom(db, parentId, limit));
+	return depth > limit
+		? fail(
+				400,
+				"todo_depth_exceeded",
+				`AI が自分で作る todo の深さの上限（${limit}）を超える。backlog で作る（backlog のままにする）か、親を review にして owner の判断を仰ぐ`,
+			)
+		: ok(null);
 };
 
 export const createTask = async (
@@ -266,23 +296,14 @@ export const createTask = async (
 		return fail(400, "unknown_assignee", "担当にする actor が名簿に無い");
 	}
 	if (input.parent_id && input.state === "todo") {
-		const creator = await findActor(db, who.actorId);
-		if (creator?.kind === "agent") {
-			const limit = await settingFor(
-				db,
-				input.project_id,
-				"max_self_todo_depth",
-			);
-			// 作るタスク自身を 1 と数える
-			const depth = 1 + (await agentChainAbove(db, input.parent_id, limit));
-			if (depth > limit) {
-				return fail(
-					400,
-					"todo_depth_exceeded",
-					`AI が自分で作る todo の深さの上限（${limit}）を超える。backlog で作るか、親を review にして owner の判断を仰ぐ`,
-				);
-			}
-		}
+		const depth = await checkSelfTodoDepth(
+			db,
+			who,
+			input.project_id,
+			input.parent_id,
+			null,
+		);
+		if (!depth.ok) return depth;
 	}
 	const discovered: RelationInput | undefined = input.discovered_from && {
 		kind: "discovered_from",
@@ -466,6 +487,17 @@ export const updateTask = async (
 		const currentLabels = (await labelsOf(db, [id])).get(id) ?? [];
 
 		const state = input.state ?? current.state;
+		// backlog で作ってから todo に上げても、起票のときと同じ上限に掛かる
+		if (state === "todo" && current.state !== "todo" && current.parentId) {
+			const depth = await checkSelfTodoDepth(
+				db,
+				who,
+				current.projectId,
+				current.parentId,
+				id,
+			);
+			if (!depth.ok) return depth;
+		}
 		let waitingOn: string | null;
 		if (state === "review") {
 			waitingOn =

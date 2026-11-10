@@ -224,7 +224,7 @@ export const TOOLS: {
 		name: "create_task",
 		title: "タスクを起票する",
 		description:
-			"タスクを起票する。起票の前に search_tasks で似たタスクを探す。state の既定は backlog。並びはプロジェクトの末尾に入る。AI が親の下に todo で作れる深さには上限があり、超えると拒まれる（backlog では作れる）。",
+			"タスクを起票する。起票の前に search_tasks で似たタスクを探す。state の既定は backlog。並びはプロジェクトの末尾に入る。AI が親の下に todo で作れる深さには上限があり、超えると拒まれる（backlog では作れるが、AI が todo に上げるときにも同じ上限が掛かる）。",
 		inputSchema: {
 			type: "object",
 			properties: {

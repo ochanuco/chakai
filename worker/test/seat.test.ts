@@ -382,11 +382,68 @@ describe("AI が自分で作る todo の深さの上限", () => {
 		expect((await create(project.id, again, yukarin)).status).toBe(400);
 	});
 
-	it("渡した親を agent が作っていたら、その親も数える", async () => {
+	it("席に渡したことのない agent 製の親は、その親も数える", async () => {
 		const project = await newProject();
 		const parent = await newTask(project.id, {}, yukarin);
 		const second = await chain(project.id, parent.id, 2);
 		expect((await create(project.id, second, yukarin)).status).toBe(400);
+	});
+
+	it("席に渡した親が agent 製でも、渡した親を 0 として数え直す", async () => {
+		const project = await projectWithRepo();
+		const parent = await newTask(project.id, {}, yukarin);
+		await startRun(parent.id);
+		const third = await chain(project.id, parent.id, 3);
+		expect((await create(project.id, third, yukarin)).status).toBe(400);
+
+		// 途中のタスクを席に渡すと、そこから数え直す。run を閉じた後も変わらない
+		const run = await startRun(third);
+		await call(yukarin, "POST", `/v1/runs/${run.id}/end`);
+		const again = await chain(project.id, third, 3);
+		expect((await create(project.id, again, yukarin)).status).toBe(400);
+	});
+
+	it("agent が backlog で作って todo に上げても、上限に掛かる。owner が上げるのは通す", async () => {
+		const project = await newProject();
+		const parent = await newTask(project.id, { state: "todo" });
+		const third = await chain(project.id, parent.id, 3);
+		const res = await create(project.id, third, yukarin, "backlog");
+		const deep = await res.json<TaskJson>();
+
+		const denied = await patch(deep.id, { state: "todo" }, akarin);
+		expect(denied.status).toBe(400);
+		expect(await denied.json()).toMatchObject({ error: "todo_depth_exceeded" });
+		// todo に上げる以外の更新は通る
+		expect((await patch(deep.id, { title: "件名" }, akarin)).status).toBe(200);
+		expect((await patch(deep.id, { state: "doing" }, akarin)).status).toBe(200);
+		expect((await patch(deep.id, { state: "todo" }, akarin)).status).toBe(400);
+
+		expect((await patch(deep.id, { state: "todo" }, owner)).status).toBe(200);
+		// もう todo のタスクの、状態を変えない更新は拒まない
+		expect((await patch(deep.id, { title: "t" }, akarin)).status).toBe(200);
+	});
+
+	it("上限の内側と、親の無いタスク、人が作ったタスクは、agent が todo に上げられる", async () => {
+		const project = await newProject();
+		const parent = await newTask(project.id, { state: "todo" });
+		const second = await chain(project.id, parent.id, 2);
+		const inside = await (
+			await create(project.id, second, yukarin, "backlog")
+		).json<TaskJson>();
+		expect((await patch(inside.id, { state: "todo" }, yukarin)).status).toBe(
+			200,
+		);
+
+		const top = await newTask(project.id, {}, yukarin);
+		expect((await patch(top.id, { state: "todo" }, yukarin)).status).toBe(200);
+
+		const third = await chain(project.id, parent.id, 3);
+		const byOwner = await (
+			await create(project.id, third, owner, "backlog")
+		).json<TaskJson>();
+		expect((await patch(byOwner.id, { state: "todo" }, yukarin)).status).toBe(
+			200,
+		);
 	});
 
 	it("プロジェクトの上書きが global より先に効き、消すと global に戻る", async () => {
