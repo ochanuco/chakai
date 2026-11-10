@@ -129,7 +129,7 @@ const createdByAgent = (db: Db) =>
 	);
 
 /** 仕分け待ち: agent が起票し、owner がまだ扱いを決めていない backlog */
-const awaitingTriage = (db: Db) =>
+export const awaitingTriage = (db: Db) =>
 	and(eq(tasks.state, "backlog"), isNull(tasks.triagedAt), createdByAgent(db));
 
 const escapeLike = (s: string) => s.replace(/[\\%_]/g, (c) => `\\${c}`);

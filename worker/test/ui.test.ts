@@ -1,5 +1,6 @@
 import { env } from "cloudflare:workers";
 import { beforeAll, describe, expect, it } from "vitest";
+import { renderTriage } from "../src/ui/pages.ts";
 import {
 	type As,
 	call,
@@ -31,7 +32,15 @@ const text = async (path: string, as: As | null = owner) => {
 };
 
 describe("画面を開ける人", () => {
-	const paths = ["/", "/assets/app.js", "/projects/x", "/tasks/x", "/nowhere"];
+	const paths = [
+		"/",
+		"/assets/app.js",
+		"/triage",
+		"/settings",
+		"/projects/x",
+		"/tasks/x",
+		"/nowhere",
+	];
 
 	it("owner のログインには返す", async () => {
 		const home = await text("/");
@@ -71,8 +80,37 @@ describe("画面を開ける人", () => {
 		expect((await text("/nowhere")).status).toBe(404);
 		expect((await text("/projects/nope")).status).toBe(404);
 		expect((await text("/tasks/nope")).status).toBe(404);
+		expect((await text("/triage/x")).status).toBe(404);
+		expect((await text("/settings/x")).status).toBe(404);
 	});
 });
+
+const projectWithRepo = async () => {
+	const project = await newProject();
+	await call(owner, "POST", `/v1/projects/${project.id}/repos`, {
+		repo: "example/app",
+	});
+	return project;
+};
+
+const startRun = async (taskId: string, seat: string, as: As) => {
+	const res = await call(as, "POST", "/v1/runs", {
+		task_id: taskId,
+		seat,
+		model: "model-x",
+	});
+	expect(res.status).toBe(201);
+	return res.json<{ id: string }>();
+};
+
+const relate = (from: string, kind: string, to: string) =>
+	call(owner, "POST", `/v1/tasks/${from}/relations`, { kind, to_task: to });
+
+const putSetting = (scope: string, value: number | null) =>
+	call(owner, "PUT", `/v1/settings/${scope}`, {
+		key: "max_self_todo_depth",
+		value,
+	});
 
 describe("読み取りの REST", () => {
 	it("タスクの履歴を、誰が・どこから・前後の値つきで古い順に返す", async () => {
@@ -120,6 +158,37 @@ describe("読み取りの REST", () => {
 		const res = await call(owner, "GET", "/v1/tasks/nope/events");
 		expect(res.status).toBe(404);
 		expect(await res.json()).toMatchObject({ error: "task_not_found" });
+	});
+
+	it("タスクの実行記録を、始めた順に返す", async () => {
+		const project = await projectWithRepo();
+		const task = await newTask(project.id, { state: "todo" });
+		const first = await startRun(task.id, "seat-a", working("yukarin"));
+		await call(working("yukarin"), "POST", `/v1/runs/${first.id}/end`);
+		const second = await startRun(task.id, "seat-b", working("akarin"));
+
+		const res = await call(mac, "GET", `/v1/tasks/${task.id}/runs`);
+		expect(res.status).toBe(200);
+		const { runs } = await res.json<{ runs: Record<string, unknown>[] }>();
+		expect(runs).toMatchObject([
+			{
+				id: first.id,
+				task_id: task.id,
+				actor_id: "yukarin",
+				seat: "seat-a",
+				model: "model-x",
+				ended_at: expect.any(String),
+			},
+			{ id: second.id, actor_id: "akarin", seat: "seat-b", ended_at: null },
+		]);
+
+		const other = await newTask(project.id);
+		expect(
+			await (await call(mac, "GET", `/v1/tasks/${other.id}/runs`)).json(),
+		).toEqual({ runs: [] });
+		const missing = await call(mac, "GET", "/v1/tasks/nope/runs");
+		expect(missing.status).toBe(404);
+		expect(await missing.json()).toMatchObject({ error: "task_not_found" });
 	});
 
 	it("名簿を返すが、email は載せない", async () => {
@@ -174,12 +243,20 @@ describe("画面", () => {
 
 	it("AI が書いた件名や本文を、HTML として解釈させない", async () => {
 		const project = await newProject();
-		const task = await newTask(project.id, {
-			title: "<script>alert(1)</script>",
-			body: "<img src=x onerror=alert(2)>",
-			labels: ['"><b>'],
-		});
-		for (const path of [`/projects/${project.id}`, `/tasks/${task.id}`]) {
+		const task = await newTask(
+			project.id,
+			{
+				title: "<script>alert(1)</script>",
+				body: "<img src=x onerror=alert(2)>",
+				labels: ['"><b>'],
+			},
+			working("yukarin"),
+		);
+		for (const path of [
+			`/projects/${project.id}`,
+			`/tasks/${task.id}`,
+			"/triage",
+		]) {
 			const { body } = await text(path);
 			expect(body).not.toContain("<script>alert(1)");
 			expect(body).not.toContain("<img src=x");
@@ -295,5 +372,211 @@ describe("画面", () => {
 		// ID や order_key をそのまま並べない
 		expect(history).not.toContain("akarin<");
 		expect(history).not.toContain("order_key");
+	});
+
+	/** 件名を含む 1 件ぶんの HTML。区切りは、その画面で 1 件を包む開始タグ */
+	const pieceOf = (body: string, open: string, title: string) =>
+		body.split(open).find((piece) => piece.includes(title)) ?? "";
+
+	it("仕分け待ちに、AI が起票した未仕分けの backlog をプロジェクトをまたいで出す", async () => {
+		const a = await projectWithRepo();
+		const b = await newProject();
+		const origin = await newTask(a.id, { title: "仕分けの元の作業" });
+		const run = await startRun(origin.id, "seat-triage", working("yukarin"));
+		const found = await newTask(
+			b.id,
+			{
+				title: "作業中に見つけた課題",
+				labels: ["found"],
+				discovered_from: { task_id: origin.id, run_id: run.id },
+			},
+			working("yukarin"),
+		);
+		const plain = await newTask(
+			a.id,
+			{ title: "関係の無い AI の起票" },
+			working("akarin"),
+		);
+		await newTask(a.id, { title: "owner が起票した backlog" });
+		const raised = await newTask(
+			a.id,
+			{ title: "もう todo に上げた" },
+			working("yukarin"),
+		);
+		await patch(raised.id, { state: "todo" });
+		const kept = await newTask(
+			a.id,
+			{ title: "backlog に残すと決めた" },
+			working("yukarin"),
+		);
+		expect(
+			(await call(owner, "POST", `/v1/tasks/${kept.id}/triage`)).status,
+		).toBe(200);
+
+		const { status, body } = await text("/triage");
+		expect(status).toBe(200);
+		expect(body).not.toContain("owner が起票した backlog");
+		expect(body).not.toContain("もう todo に上げた");
+		expect(body).not.toContain("backlog に残すと決めた");
+
+		const card = pieceOf(body, '<div class="card">', "作業中に見つけた課題");
+		expect(card).toContain(`href="/tasks/${found.id}"`);
+		expect(card).toMatch(
+			/起票 Yukarin・\d{4}-\d{2}-\d{2} \d{2}:\d{2}（たった今）/,
+		);
+		expect(card).toContain(`<a href="/projects/${b.id}">`);
+		expect(card).toContain(
+			`「<a href="/tasks/${origin.id}">仕分けの元の作業</a>」の作業中に見つけた（席 seat-triage）`,
+		);
+		expect(card).toContain('<span class="label">found</span>');
+		for (const action of ["todo", "dropped", "keep"]) {
+			expect(card).toContain(
+				`data-triage="${found.id}" data-action="${action}"`,
+			);
+		}
+		const other = pieceOf(body, '<div class="card">', "関係の無い AI の起票");
+		expect(other).toContain("起票 Akarin・");
+		expect(other).toContain(`<a href="/projects/${a.id}">`);
+		expect(other).not.toContain("の作業中に見つけた");
+		expect(body.indexOf(found.id)).toBeLessThan(body.indexOf(plain.id));
+
+		// 件数は、見出しとナビゲーションと行の数で一致し、他の画面にも出る
+		const count = body.match(/data-action="keep"/g)?.length ?? 0;
+		expect(body).toContain(`<span class="muted">${count} 件</span>`);
+		const nav = `<a href="/triage">仕分け待ち <span class="n some">${count}</span></a>`;
+		expect(body).toContain(nav);
+		expect((await text("/")).body).toContain(nav);
+		expect((await text("/settings")).body).toContain(nav);
+		expect((await text("/nowhere")).body).toContain(nav);
+
+		await patch(found.id, { state: "dropped" });
+		const after = (await text("/triage")).body;
+		expect(after).not.toContain("作業中に見つけた課題");
+		expect(after).toContain(
+			`<a href="/triage">仕分け待ち <span class="n some">${count - 1}</span></a>`,
+		);
+	});
+
+	it("仕分け待ちが 0 件でも、画面を出す", () => {
+		const body = renderTriage(
+			{ rows: [], projects: [], names: new Map(), now: new Date() },
+			{ triage: 0 },
+		);
+		expect(body).toContain("仕分けを待っているタスクは無い");
+		expect(body).toContain('<span class="muted">0 件</span>');
+		expect(body).toContain(
+			'<a href="/triage">仕分け待ち <span class="n">0</span></a>',
+		);
+		expect(body).not.toContain("data-triage");
+	});
+
+	it("設定に、効いている値と出どころを出し、自分の値がある scope にだけ戻すボタンを出す", async () => {
+		const project = await newProject();
+		const form = async (scope: string) =>
+			pieceOf(
+				(await text("/settings")).body,
+				"<form ",
+				`data-setting-scope="${scope}"`,
+			).split("</form>")[0] ?? "";
+
+		expect((await putSetting("global", null)).status).toBe(200);
+		let global = await form("global");
+		expect(global).toContain(
+			'効いている値 <strong>3</strong></span><span class="label">既定</span>',
+		);
+		expect(global).toContain('data-key="max_self_todo_depth"');
+		expect(global).not.toContain("data-setting-reset");
+		expect(global).not.toContain(" value=");
+
+		await putSetting("global", 5);
+		global = await form("global");
+		expect(global).toContain(
+			'効いている値 <strong>5</strong></span><span class="label">全体</span>',
+		);
+		expect(global).toContain('required value="5"');
+		expect(global).toContain("data-setting-reset>既定に戻す</button>");
+		let own = await form(project.id);
+		expect(own).toContain(
+			'効いている値 <strong>5</strong></span><span class="label">全体</span>',
+		);
+		expect(own).not.toContain("data-setting-reset");
+		expect(own).not.toContain(" value=");
+
+		await putSetting(project.id, 0);
+		own = await form(project.id);
+		expect(own).toContain(
+			'効いている値 <strong>0</strong></span><span class="label">プロジェクト</span>',
+		);
+		expect(own).toContain('required value="0"');
+		expect(own).toContain("data-setting-reset>上書きを消す</button>");
+
+		await putSetting(project.id, null);
+		expect(await form(project.id)).toContain('<span class="label">全体</span>');
+		await putSetting("global", null);
+		expect(await form(project.id)).toContain('<span class="label">既定</span>');
+	});
+
+	it("タスクの画面に、関係を両方の向きから、実行記録を席と actor つきで出す", async () => {
+		const project = await projectWithRepo();
+		const base = await newTask(project.id, { title: "席に渡したタスク" });
+		const run = await startRun(base.id, "seat-view", working("yukarin"));
+		const found = await newTask(
+			project.id,
+			{
+				title: "見つけた課題のタスク",
+				discovered_from: { task_id: base.id, run_id: run.id },
+			},
+			working("yukarin"),
+		);
+		const next = await newTask(project.id, { title: "続きのタスク" });
+		const redo = await newTask(project.id, { title: "作り直したタスク" });
+		expect((await relate(next.id, "follows", base.id)).status).toBe(200);
+		expect((await relate(base.id, "replaced_by", redo.id)).status).toBe(200);
+
+		const row = async (taskId: string, title: string) => {
+			const { body } = await text(`/tasks/${taskId}`);
+			const section = body.slice(
+				body.indexOf("<h2>関係</h2>"),
+				body.indexOf("<h2>変更</h2>"),
+			);
+			return pieceOf(section, '<div class="row">', title);
+		};
+		const rel = (name: string) => `<span class="rel">${name}</span>`;
+
+		expect(await row(base.id, "見つけた課題のタスク")).toContain(
+			rel("ここで見つけた"),
+		);
+		expect(await row(base.id, "見つけた課題のタスク")).toContain(
+			"discovered_from・席 seat-view",
+		);
+		expect(await row(base.id, "続きのタスク")).toContain(rel("続き"));
+		expect(await row(base.id, "作り直したタスク")).toContain(
+			rel("作り直した先"),
+		);
+		const origin = await row(found.id, "席に渡したタスク");
+		expect(origin).toContain(rel("見つけた元"));
+		expect(origin).toContain(`href="/tasks/${base.id}"`);
+		expect(origin).toContain("席 seat-view");
+		expect(await row(next.id, "席に渡したタスク")).toContain(rel("区切った元"));
+		expect(await row(redo.id, "席に渡したタスク")).toContain(rel("作り直す前"));
+
+		const runs = async () => {
+			const { body } = await text(`/tasks/${base.id}`);
+			return body.slice(
+				body.indexOf("<h2>実行記録</h2>"),
+				body.indexOf("<h2>変更</h2>"),
+			);
+		};
+		const open = await runs();
+		expect(open).toContain("席 seat-view");
+		expect(open).toContain("Yukarin・model-x");
+		expect(open).toMatch(/\d{4}-\d{2}-\d{2} \d{2}:\d{2} 〜 実行中/);
+		await call(working("yukarin"), "POST", `/v1/runs/${run.id}/end`);
+		expect(await runs()).toMatch(
+			/\d{4}-\d{2}-\d{2} \d{2}:\d{2} 〜 \d{4}-\d{2}-\d{2} \d{2}:\d{2}</,
+		);
+
+		const none = (await text(`/tasks/${redo.id}`)).body;
+		expect(none).not.toContain("<h2>実行記録</h2>");
 	});
 });

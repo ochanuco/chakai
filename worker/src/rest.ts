@@ -7,7 +7,7 @@ import { createProject, linkRepo, listProjects } from "./projects.ts";
 import { relateTasks } from "./relations.ts";
 import { type Failure, fail, type Result } from "./result.ts";
 import { listActors, listLabels } from "./roster.ts";
-import { endRun, startRun } from "./runs.ts";
+import { endRun, listRuns, startRun } from "./runs.ts";
 import { getSettings, putSetting, SETTING_KEYS } from "./settings.ts";
 import {
 	createTask,
@@ -211,6 +211,12 @@ export const handleRest = async (
 			return history.ok
 				? Response.json({ events: history.value })
 				: failure(history.error);
+		}
+		case "GET tasks/:id/runs": {
+			const found = await listRuns(db, id);
+			return found.ok
+				? Response.json({ runs: found.value })
+				: failure(found.error);
 		}
 		case "GET actors":
 			return Response.json({ actors: await listActors(db) });

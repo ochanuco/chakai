@@ -3,11 +3,14 @@ import type { RestContext } from "../rest.ts";
 import { isOwnerLogin, listActors, listLabels } from "../roster.ts";
 import { CLIENT_JS } from "./client.ts";
 import {
+	countTriage,
 	loadProject,
 	loadProjects,
 	loadReviews,
+	loadSettings,
 	loadStateCounts,
 	loadTask,
+	loadTriage,
 } from "./data.ts";
 import {
 	actorNames,
@@ -15,7 +18,9 @@ import {
 	renderHome,
 	renderNotFound,
 	renderProject,
+	renderSettings,
 	renderTask,
+	renderTriage,
 } from "./pages.ts";
 
 const HEADERS = {
@@ -44,8 +49,22 @@ export const handleUi = async (
 	}
 	const url = new URL(request.url);
 	const [section, id, ...rest] = url.pathname.split("/").filter(Boolean);
+	if (
+		request.method === "GET" &&
+		section === "assets" &&
+		id === "app.js" &&
+		rest.length === 0
+	) {
+		return new Response(CLIENT_JS, {
+			headers: {
+				...HEADERS,
+				"content-type": "text/javascript; charset=utf-8",
+			},
+		});
+	}
+	const nav = { triage: await countTriage(db) };
 	if (request.method !== "GET" || rest.length > 0) {
-		return page(renderNotFound(), 404);
+		return page(renderNotFound(nav), 404);
 	}
 	const now = new Date();
 
@@ -57,38 +76,51 @@ export const handleUi = async (
 			listActors(db),
 		]);
 		return page(
-			renderHome({ reviews, projects, counts, names: actorNames(actors), now }),
+			renderHome(
+				{ reviews, projects, counts, names: actorNames(actors), now },
+				nav,
+			),
 		);
 	}
-	if (section === "assets" && id === "app.js") {
-		return new Response(CLIENT_JS, {
-			headers: {
-				...HEADERS,
-				"content-type": "text/javascript; charset=utf-8",
-			},
-		});
+	if (section === "triage" && !id) {
+		const [rows, projects, actors] = await Promise.all([
+			loadTriage(db),
+			loadProjects(db),
+			listActors(db),
+		]);
+		// 数えた後に仕分け待ちが増減していても、見出しとナビゲーションの件数が食い違わないようにする
+		return page(
+			renderTriage(
+				{ rows, projects, names: actorNames(actors), now },
+				{ triage: rows.length },
+			),
+		);
+	}
+	if (section === "settings" && !id) {
+		return page(renderSettings(await loadSettings(db), nav));
 	}
 	if (section === "projects" && id) {
 		const view = await loadProject(db, id);
-		if (!view) return page(renderNotFound(), 404);
+		if (!view) return page(renderNotFound(nav), 404);
 		return page(
 			renderProject(
 				view,
 				parseStates(url.searchParams.get("state")),
 				actorNames(await listActors(db)),
 				now,
+				nav,
 			),
 		);
 	}
 	if (section === "tasks" && id) {
 		const view = await loadTask(db, id);
 		const history = await listTaskEvents(db, id);
-		if (!view || !history.ok) return page(renderNotFound(), 404);
+		if (!view || !history.ok) return page(renderNotFound(nav), 404);
 		const [actors, labels] = await Promise.all([
 			listActors(db),
 			listLabels(db),
 		]);
-		return page(renderTask(view, history.value, actors, labels, now));
+		return page(renderTask(view, history.value, actors, labels, now, nav));
 	}
-	return page(renderNotFound(), 404);
+	return page(renderNotFound(nav), 404);
 };

@@ -1,13 +1,17 @@
 import { TASK_STATES, type TaskState } from "../db/schema.ts";
 import type { TaskEvent } from "../history.ts";
 import type { Actor, Label } from "../roster.ts";
+import type { SettingSource, Settings } from "../settings.ts";
 import type {
 	ProjectRow,
 	ProjectView,
+	RelatedTask,
 	ReviewRow,
+	SettingsView,
 	StateCounts,
 	TaskRow,
 	TaskView,
+	TriageRow,
 } from "./data.ts";
 import { html, Markup } from "./html.ts";
 
@@ -21,8 +25,10 @@ body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-appl
 a{color:var(--link);text-decoration:none}
 a:hover{text-decoration:underline}
 header{border-bottom:1px solid var(--line);background:var(--card)}
-header nav{max-width:960px;margin:0 auto;padding:10px 16px;display:flex;gap:16px;align-items:baseline}
+header nav{max-width:960px;margin:0 auto;padding:10px 16px;display:flex;flex-wrap:wrap;gap:4px 16px;align-items:baseline}
 header .brand{font-weight:700;color:var(--fg)}
+header .n{display:inline-block;min-width:1.5em;border-radius:999px;padding:0 6px;font-size:.8rem;font-weight:600;text-align:center;background:var(--backlog-bg);color:var(--backlog-fg)}
+header .n.some{background:var(--review-bg);color:var(--review-fg)}
 main{max-width:960px;margin:0 auto;padding:16px 16px 48px}
 h1{font-size:1.3rem;line-height:1.4;margin:8px 0}
 h2{font-size:1.05rem;margin:28px 0 8px}
@@ -51,6 +57,11 @@ ul.tree ul{margin-left:14px;padding-left:10px;border-left:2px solid var(--line)}
 .row .waiting{flex-basis:100%;font-size:.875rem;color:var(--review-fg)}
 .row.context{opacity:.55}
 .row.closed .title{color:var(--muted)}
+.row .rel{flex:0 0 7.5em;color:var(--muted);font-size:.85rem}
+.actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.actions button,button.plain{font:inherit;padding:4px 12px;border-radius:6px;border:1px solid var(--line);background:var(--card);color:var(--fg);cursor:pointer}
+.actions button:disabled,button.plain:disabled{opacity:.5;cursor:default}
+.inline{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
 .move{display:inline-flex;gap:2px;margin-left:auto}
 .move button{width:30px;height:30px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--fg);font:inherit;cursor:pointer}
 .move button:disabled{opacity:.3;cursor:default}
@@ -60,8 +71,9 @@ dl.meta dt{color:var(--muted);font-size:.875rem}
 dl.meta dd{margin:0}
 form .field{margin:10px 0}
 form .field>label,form .field>.name{display:block;font-size:.875rem;color:var(--muted);margin-bottom:2px}
-form select,form input[type=text],form textarea{font:inherit;color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:6px 8px;max-width:100%}
+form select,form input[type=text],form input[type=number],form textarea{font:inherit;color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:6px 8px;max-width:100%}
 form textarea,form input[type=text]{width:100%}
+form input[type=number]{width:6em}
 form .checks{display:flex;flex-wrap:wrap;gap:4px 14px}
 form button[type=submit]{font:inherit;font-weight:600;padding:6px 18px;border-radius:6px;border:1px solid var(--fg);background:var(--fg);color:var(--bg);cursor:pointer}
 form button:disabled{opacity:.5}
@@ -149,7 +161,10 @@ const taskRow = (task: TaskRow, o: RowOptions) => {
 	}${o.project ? html`<a class="who" href="/projects/${o.project.id}">${o.project.name}</a>` : ""}${move}${waiting}</div>`;
 };
 
-const page = (title: string, content: Markup): string =>
+/** どの画面にも出すもの。triage は仕分け待ちの件数 */
+export type Nav = { triage: number };
+
+const page = (title: string, content: Markup, nav: Nav): string =>
 	html`<!doctype html>
 <html lang="ja">
 <head>
@@ -159,7 +174,7 @@ const page = (title: string, content: Markup): string =>
 <style>${new Markup(CSS)}</style>
 </head>
 <body>
-<header><nav><a class="brand" href="/">chakai</a><a href="/">owner の番</a><a href="/#projects">プロジェクト</a></nav></header>
+<header><nav><a class="brand" href="/">chakai</a><a href="/">owner の番</a><a href="/triage">仕分け待ち <span class="n${nav.triage > 0 ? " some" : ""}">${nav.triage}</span></a><a href="/#projects">プロジェクト</a><a href="/settings">設定</a></nav></header>
 <main>
 <p id="alert" class="alert" role="alert" hidden></p>
 ${content}
@@ -168,13 +183,16 @@ ${content}
 </body>
 </html>`.value;
 
-export const renderHome = (view: {
-	reviews: ReviewRow[];
-	projects: ProjectRow[];
-	counts: Map<string, StateCounts>;
-	names: Names;
-	now: Date;
-}): string => {
+export const renderHome = (
+	view: {
+		reviews: ReviewRow[];
+		projects: ProjectRow[];
+		counts: Map<string, StateCounts>;
+		names: Names;
+		now: Date;
+	},
+	nav: Nav,
+): string => {
 	const projectById = new Map(view.projects.map((p) => [p.id, p]));
 	return page(
 		"owner の番",
@@ -204,8 +222,80 @@ ${
 				)}${Object.keys(counts).length === 0 ? html`<span class="muted">タスクなし</span>` : ""}</div></div>`;
 			})
 }`,
+		nav,
 	);
 };
+
+export const renderTriage = (
+	view: {
+		rows: TriageRow[];
+		projects: ProjectRow[];
+		names: Names;
+		now: Date;
+	},
+	nav: Nav,
+): string => {
+	const projectById = new Map(view.projects.map((p) => [p.id, p]));
+	return page(
+		"仕分け待ち",
+		html`<h1>仕分け待ち <span class="muted">${view.rows.length} 件</span></h1>
+<p class="muted">AI が起票して、まだ扱いを決めていない backlog のタスク。どれかを選ぶと仕分け済みになる。</p>
+${
+	view.rows.length === 0
+		? html`<p class="muted">仕分けを待っているタスクは無い。</p>`
+		: view.rows.map((t) => {
+				const project = projectById.get(t.projectId);
+				return html`<div class="card"><div><a href="/tasks/${t.id}">${t.title}</a> ${labelChips(t.labels)}</div>
+<div class="muted">起票 ${nameOf(view.names, t.createdBy)}・${when(t.createdAt, view.now)}${project ? html`・<a href="/projects/${project.id}">${project.name}</a>` : ""}</div>
+${t.discoveredFrom.map(
+	(o) =>
+		html`<div class="muted">「<a href="/tasks/${o.id}">${o.title}</a>」の作業中に見つけた${o.seat ? html`（席 ${o.seat}）` : ""}</div>`,
+)}
+<div class="actions"><button type="button" data-triage="${t.id}" data-action="todo">todo に上げる</button><button type="button" data-triage="${t.id}" data-action="dropped">dropped にする</button><button type="button" data-triage="${t.id}" data-action="keep">backlog に残す</button></div></div>`;
+			})
+}`,
+		nav,
+	);
+};
+
+const SOURCE_NAMES: Record<SettingSource, string> = {
+	default: "既定",
+	global: "全体",
+	project: "プロジェクト",
+};
+
+const DEPTH_KEY = "max_self_todo_depth";
+
+/** scope に自分の値があるときだけ、入力欄に値を入れ、上の値に戻すボタンを出す */
+const settingForm = (settings: Settings, own: SettingSource, reset: string) => {
+	const { value, source } = settings.settings[DEPTH_KEY];
+	const id = `f-depth-${settings.scope}`;
+	return html`<form class="inline" data-setting-scope="${settings.scope}" data-key="${DEPTH_KEY}">
+<span>効いている値 <strong>${value}</strong></span><span class="label">${SOURCE_NAMES[source]}</span>
+<label class="muted" for="${id}">${own === "global" ? "全体の値" : "上書きする値"}</label><input id="${id}" type="number" name="value" min="0" max="20" step="1" inputmode="numeric" required${source === own ? html` value="${value}"` : ""}>
+<button type="submit">保存</button>${source === own ? html`<button type="button" class="plain" data-setting-reset>${reset}</button>` : ""}
+</form>`;
+};
+
+export const renderSettings = (view: SettingsView, nav: Nav): string =>
+	page(
+		"設定",
+		html`<h1>設定</h1>
+<h2>自分で作る todo の深さの上限 <span class="muted">${DEPTH_KEY}</span></h2>
+<p class="muted">AI が親の下に todo でタスクを作るとき、AI が作ったタスクが上へ続いてよい数。0 から 20 の整数。プロジェクトに上書きが無ければ全体の値、全体の値も無ければ既定の値が効く。</p>
+<h2>全体</h2>
+<div class="card">${settingForm(view.global, "global", "既定に戻す")}</div>
+<h2>プロジェクトごとの上書き</h2>
+${
+	view.projects.length === 0
+		? html`<p class="muted">プロジェクトはまだ無い。</p>`
+		: view.projects.map(
+				({ project, settings }) =>
+					html`<div class="card"><div><a href="/projects/${project.id}"><strong>${project.name}</strong></a></div>${settingForm(settings, "project", "上書きを消す")}</div>`,
+			)
+}`,
+		nav,
+	);
 
 export const ACTIVE_STATES: TaskState[] = [
 	"backlog",
@@ -238,6 +328,7 @@ export const renderProject = (
 	states: TaskState[],
 	names: Names,
 	now: Date,
+	nav: Nav,
 ): string => {
 	const { project, tasks } = view;
 	const byId = new Map(tasks.map((t) => [t.id, t]));
@@ -294,6 +385,7 @@ ${view.repos.length > 0 ? html`<p class="muted">repo: ${view.repos.join("、")}<
 <div class="chips">${chip("進行中", ACTIVE_STATES)}${chip("すべて", [...TASK_STATES], tasks.length)}</div>
 <div class="chips">${TASK_STATES.map(toggle)}</div>
 ${roots.length > 0 ? branch(roots, true) : html`<p class="muted">当てはまるタスクは無い。</p>`}`,
+		nav,
 	);
 };
 
@@ -348,12 +440,29 @@ const change = (event: TaskEvent, names: Names): Markup => {
 	return fromTo(plain);
 };
 
+/** 関係の向きごとの呼び名。relation は「from_task が kind で to_task」と読む */
+const RELATION_NAMES: Record<
+	RelatedTask["kind"],
+	{ outgoing: string; incoming: string }
+> = {
+	discovered_from: {
+		outgoing: "見つけた元",
+		incoming: "ここで見つけた",
+	},
+	follows: { outgoing: "区切った元", incoming: "続き" },
+	replaced_by: { outgoing: "作り直した先", incoming: "作り直す前" },
+};
+
+const relationRow = (r: RelatedTask) =>
+	html`<div class="row"><span class="rel">${RELATION_NAMES[r.kind][r.outgoing ? "outgoing" : "incoming"]}</span>${badge(r.task.state)}<a class="title" href="/tasks/${r.task.id}">${r.task.title}</a><span class="who">${r.kind}${r.seat ? html`・席 ${r.seat}` : ""}</span></div>`;
+
 export const renderTask = (
 	view: TaskView,
 	history: TaskEvent[],
 	actors: Actor[],
 	labels: Label[],
 	now: Date,
+	nav: Nav,
 ): string => {
 	const { task, project } = view;
 	const names = actorNames(actors);
@@ -390,6 +499,15 @@ ${
 			)}</div>`
 		: ""
 }
+${view.relations.length > 0 ? html`<h2>関係</h2><div>${view.relations.map(relationRow)}</div>` : ""}
+${
+	view.runs.length > 0
+		? html`<h2>実行記録</h2><div>${view.runs.map(
+				(r) =>
+					html`<div class="row"><span class="title">席 ${r.seat}</span><span class="who">${nameOf(names, r.actor_id)}・${r.model ?? "model なし"}</span><span class="who">${formatJst(r.started_at)} 〜 ${r.ended_at ? formatJst(r.ended_at) : "実行中"}</span></div>`,
+			)}</div>`
+		: ""
+}
 <h2>変更</h2>
 <form id="edit" class="card" data-task="${task.id}" data-state="${task.state}" data-assignee="${task.assigneeId ?? ""}" data-labels="${JSON.stringify([...task.labels].sort())}" data-waiting="${task.waitingOn ?? ""}">
 <div class="field"><label for="f-state">状態</label><select id="f-state" name="state">${TASK_STATES.map(
@@ -415,11 +533,13 @@ ${
 				(e) =>
 					html`<li><div>${change(e, names)}</div><div class="when">${nameOf(names, e.actor_id)}・${e.caller_id === null ? "ブラウザ" : (e.caller_name ?? "不明な呼び出し元")}・${when(e.at, now)}</div></li>`,
 			)}</ol>`,
+		nav,
 	);
 };
 
-export const renderNotFound = (): string =>
+export const renderNotFound = (nav: Nav): string =>
 	page(
 		"見つからない",
 		html`<h1>見つからない</h1><p><a href="/">owner の番へ戻る</a></p>`,
+		nav,
 	);

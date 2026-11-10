@@ -1,4 +1,4 @@
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, isNull, sql } from "drizzle-orm";
 import type { Principal } from "./auth.ts";
 import type { Db } from "./db/client.ts";
 import { events, projectRepos, runs, tasks } from "./db/schema.ts";
@@ -40,6 +40,28 @@ export const taskOfRun = async (db: Db, id: string) =>
 			.where(eq(runs.id, id))
 			.limit(1)
 	)[0]?.taskId;
+
+/** タスクを回した実行記録を古い順に返す。id は UUID v7 なので、id の順が始めた順になる */
+export const listRuns = async (
+	db: Db,
+	taskId: string,
+): Promise<Result<Run[]>> => {
+	const [task] = await db
+		.select({ id: tasks.id })
+		.from(tasks)
+		.where(eq(tasks.id, taskId))
+		.limit(1);
+	if (!task) return fail(404, "task_not_found", "タスクが無い");
+	return ok(
+		(
+			await db
+				.select()
+				.from(runs)
+				.where(eq(runs.taskId, taskId))
+				.orderBy(asc(runs.id))
+		).map(toRun),
+	);
+};
 
 export type StartRunInput = {
 	task_id: string;

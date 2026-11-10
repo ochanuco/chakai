@@ -16,23 +16,21 @@ const DEFAULTS = { max_self_todo_depth: 3 };
 export type SettingKey = keyof typeof DEFAULTS;
 export const SETTING_KEYS = Object.keys(DEFAULTS) as SettingKey[];
 
-type Source = "default" | "global" | "project";
+export type SettingSource = "default" | "global" | "project";
 export type Settings = {
 	scope: string;
-	settings: Record<SettingKey, { value: number; source: Source }>;
+	settings: Record<SettingKey, { value: number; source: SettingSource }>;
 };
 
-const resolve = async (db: Db, scope: string): Promise<Settings> => {
-	const rows = await db
-		.select()
-		.from(settings)
-		.where(inArray(settings.scope, [GLOBAL_SCOPE, scope]));
+type SettingRow = typeof settings.$inferSelect;
+
+const pick = (rows: SettingRow[], scope: string): Settings => {
 	const stored = (at: string, key: SettingKey) => {
 		const row = rows.find((r) => r.scope === at && r.key === key);
 		const value = row ? (JSON.parse(row.value) as number | null) : null;
 		return value ?? undefined;
 	};
-	const one = (key: SettingKey): { value: number; source: Source } => {
+	const one = (key: SettingKey): { value: number; source: SettingSource } => {
 		const own = scope === GLOBAL_SCOPE ? undefined : stored(scope, key);
 		if (own !== undefined) return { value: own, source: "project" };
 		const global = stored(GLOBAL_SCOPE, key);
@@ -42,6 +40,24 @@ const resolve = async (db: Db, scope: string): Promise<Settings> => {
 	return {
 		scope,
 		settings: { max_self_todo_depth: one("max_self_todo_depth") },
+	};
+};
+
+const resolve = async (db: Db, scope: string): Promise<Settings> =>
+	pick(
+		await db
+			.select()
+			.from(settings)
+			.where(inArray(settings.scope, [GLOBAL_SCOPE, scope])),
+		scope,
+	);
+
+/** global で効く設定と、渡したプロジェクトそれぞれで効く設定（渡した順） */
+export const settingsOfScopes = async (db: Db, projectIds: string[]) => {
+	const rows = await db.select().from(settings);
+	return {
+		global: pick(rows, GLOBAL_SCOPE),
+		projects: projectIds.map((scope) => pick(rows, scope)),
 	};
 };
 
