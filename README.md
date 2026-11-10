@@ -31,6 +31,7 @@ actor の ID は名簿の名前（`owner`、`yukarin` など）で、それ以�
 - タスクは消さない。やめたものは `dropped` にする。
 - `order_key` はプロジェクト内の並びを表す fractional index。起票すると末尾に入り、更新の `order` で他のタスクの直前・直後に動かす。
 - 書き込みはすべて `events` に追記する（`actor_id`、`caller_id`、`field`、`before`、`after`）。`events` は更新も削除もできない。
+- 同じタスクへの更新が重なったら、後から書く側が読み直してやり直す。`tasks.revision` は更新のたびに 1 増え、読んだ時点から進んでいる書き込みは D1 の trigger が拒む。
 
 ## REST
 
@@ -42,7 +43,7 @@ actor の ID は名簿の名前（`owner`、`yukarin` など）で、それ以�
 | `GET /v1/tasks`               | タスクを探す（`project_id`、`q`、`state`（カンマ区切り）、`assignee_id`、`parent_id`、`label`、`limit`） |
 | `POST /v1/tasks`              | 起票する（`project_id`、`title`、`body`、`parent_id`、`state`、`assignee_id`、`labels`）                 |
 | `GET /v1/tasks/:id`           | タスクを読む                                                                                             |
-| `PATCH /v1/tasks/:id`         | 更新する（`state`、`waiting_on`、`assignee_id`、`labels`、`order`）                                      |
+| `PATCH /v1/tasks/:id` | 更新する（`title`、`body`、`state`、`waiting_on`、`assignee_id`、`labels`、`order`） |
 | `GET /health`                 | 疎通確認                                                                                                 |
 
 ## MCP

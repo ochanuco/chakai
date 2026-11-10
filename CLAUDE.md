@@ -11,9 +11,10 @@ chakai は owner と複数の AI を区別するタスク台帳。`worker/` が 
 
 ## 規約
 
-- public repo なので、メールアドレス・Client ID・アカウント ID などの実値をコード・テスト・docs に書かない。名簿は D1 のデータで、テストは example.com と架空の ID を使う
+- public repo なので、個人のメールアドレス、Discord などの ID、service token の Client ID と secret、そのほかの秘密の値をコード・テスト・docs に書かない。名簿は D1 のデータで、テストは example.com と架空の ID を使う。`worker/wrangler.jsonc` の D1 の `database_id` と Access の AUD は秘密ではないので、書いてよい
 - 機能は REST に足し、MCP の道具は REST の入口へ写すだけにする
 - 書き込みは、同じ `db.batch` で `events` にも追記する。`events` は更新も削除もしない。タスクは消さない
+- タスクの更新は、読んだ行の `revision` に 1 を足して書く。他の更新と重なると trigger が拒むので、`retryOnConflict` で読み直す
 - Valibot は境界（リクエストの入力）でのみ使う。内部の型は TypeScript の型で表す
 - 想定内の失敗は例外を投げず `{ ok: false, error }` で返す
 - ID は UUID v7（`newId()`）。actor の ID だけは名簿の名前
