@@ -1,0 +1,28 @@
+name: deploy
+run-name: deploy chakai @ ${{ inputs.ref }}
+
+# 手動でだけ本番に出す。Environment production の承認の後に出る
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: デプロイする ref（main、または main 上のコミット SHA。古い SHA はロールバック）
+        required: true
+        default: main
+
+permissions:
+  contents: read
+
+# run 全体を直列にする。名前は deploy.yml のジョブの concurrency（deploy-production）と変える
+concurrency:
+  group: deploy-run-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    uses: ochanuco/.github/.github/workflows/deploy.yml@336944e6c5548c749312671795a28803c5d975da # v1.6.0
+    with:
+      ref: ${{ inputs.ref }}
+      op-env-file: .github/deploy/production.env.op
+      run: worker/scripts/deploy.sh production
+    secrets: inherit

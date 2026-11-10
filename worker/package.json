@@ -1,0 +1,31 @@
+{
+	"name": "@chakai/worker",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"postinstall": "wrangler types",
+		"dev": "wrangler dev",
+		"build": "wrangler deploy --dry-run --outdir dist",
+		"typecheck": "tsc",
+		"test": "vitest run",
+		"db:generate": "drizzle-kit generate",
+		"db:migrate:local": "wrangler d1 migrations apply chakai --local",
+		"roster:init": "node scripts/roster-init.ts"
+	},
+	"dependencies": {
+		"drizzle-orm": "^0.45.4",
+		"fractional-indexing": "^3.2.0",
+		"jose": "^6.2.12",
+		"uuidv7": "^1.0.2",
+		"valibot": "^1.5.0"
+	},
+	"devDependencies": {
+		"@cloudflare/vitest-plugin": "^1.6.0",
+		"@types/node": "^24.19.2",
+		"drizzle-kit": "^0.31.11",
+		"typescript": "^7.0.2",
+		"vitest": "^5.1.0",
+		"wrangler": "^4.158.0"
+	}
+}
