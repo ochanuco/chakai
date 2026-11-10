@@ -1,0 +1,10 @@
+node_modules/
+.wrangler/
+dist/
+worker-configuration.d.ts
+.dev.vars*
+.env*
+.local
+
+# pnpm only; a stray npm install must not leave a second lockfile
+package-lock.json

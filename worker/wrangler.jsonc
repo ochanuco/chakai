@@ -1,0 +1,31 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "chakai",
+	"main": "src/index.ts",
+	"compatibility_date": "2026-10-01",
+	// 入口は Access を通ったものだけにするので、独自ドメインに絞る。Access のアプリと service token は chabatake が持つ
+	"workers_dev": false,
+	"preview_urls": false,
+	"routes": [
+		{
+			"pattern": "chakai.chanu.co",
+			"custom_domain": true
+		}
+	],
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "chakai",
+			"database_id": "7b142cfb-48b9-48b9-a90f-c6074d80fe58",
+			"migrations_dir": "migrations"
+		}
+	],
+	// ACCESS_AUD は chabatake の output chakai_access_aud
+	"vars": {
+		"ACCESS_TEAM_DOMAIN": "chanuco.cloudflareaccess.com",
+		"ACCESS_AUD": "fe483e2f05e83754e23561ebc29c2d0604a3669ddbc69e3217df443b8dec34eb"
+	},
+	"observability": {
+		"enabled": true
+	}
+}
