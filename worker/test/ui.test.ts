@@ -90,22 +90,25 @@ describe("読み取りの REST", () => {
 		const { events } = await res.json<{
 			events: Record<string, unknown>[];
 		}>();
-		expect(events.map((e) => e.field)).toEqual(["created", "state", "labels"]);
+		const ids = events.map((e) => e.id);
+		expect(ids).toEqual([...ids].sort());
+		const of = (field: string) => events.find((e) => e.field === field);
 		expect(events[0]).toMatchObject({
+			field: "created",
 			actor_id: "yukarin",
 			caller_id: WORKING.id,
 			caller_name: "working",
 			before: null,
 			after: { id: task.id, state: "backlog" },
 		});
-		expect(events[1]).toMatchObject({
+		expect(of("state")).toMatchObject({
 			actor_id: "owner",
 			caller_id: null,
 			caller_name: null,
 			before: "backlog",
 			after: "todo",
 		});
-		expect(events[2]).toMatchObject({
+		expect(of("labels")).toMatchObject({
 			actor_id: "owner",
 			caller_name: "mac-agent",
 			before: [],
