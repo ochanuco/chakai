@@ -1,8 +1,10 @@
 import type { JWTVerifyGetKey } from "jose";
 import { accessKeySource, authenticate } from "./auth.ts";
 import { openDb } from "./db/client.ts";
+import { checkWrite } from "./guard.ts";
 import { handleMcp } from "./mcp.ts";
 import { handleRest } from "./rest.ts";
+import { handleUi } from "./ui/index.ts";
 
 /** keys を差し替えられるのは、テストが Access の代わりに JWT を署名するため */
 export const createApp = (options: { keys?: JWTVerifyGetKey } = {}) => ({
@@ -10,10 +12,6 @@ export const createApp = (options: { keys?: JWTVerifyGetKey } = {}) => ({
 		const { pathname } = new URL(request.url);
 		if (request.method === "GET" && pathname === "/health") {
 			return Response.json({ ok: true });
-		}
-		const isRest = pathname.startsWith("/v1/");
-		if (!isRest && pathname !== "/mcp") {
-			return Response.json({ error: "not_found" }, { status: 404 });
 		}
 		const db = openDb(env.DB);
 		const who = await authenticate(
@@ -29,7 +27,18 @@ export const createApp = (options: { keys?: JWTVerifyGetKey } = {}) => ({
 			);
 		}
 		const context = { db, who: who.value };
-		return isRest ? handleRest(request, context) : handleMcp(request, context);
+		if (pathname.startsWith("/v1/")) {
+			const refused = checkWrite(request, who.value);
+			if (refused) {
+				return Response.json(
+					{ error: refused.error.code, message: refused.error.message },
+					{ status: refused.error.status },
+				);
+			}
+			return handleRest(request, context);
+		}
+		if (pathname === "/mcp") return handleMcp(request, context);
+		return handleUi(request, context);
 	},
 });
 

@@ -2,9 +2,11 @@ import * as v from "valibot";
 import type { Principal } from "./auth.ts";
 import type { Db } from "./db/client.ts";
 import { RELATION_KINDS, TASK_STATES } from "./db/schema.ts";
+import { listTaskEvents } from "./history.ts";
 import { createProject, linkRepo, listProjects } from "./projects.ts";
 import { relateTasks } from "./relations.ts";
 import { type Failure, fail, type Result } from "./result.ts";
+import { listActors, listLabels } from "./roster.ts";
 import { endRun, startRun } from "./runs.ts";
 import { getSettings, putSetting, SETTING_KEYS } from "./settings.ts";
 import {
@@ -204,6 +206,16 @@ export const handleRest = async (
 			if (!input.ok) return failure(input.error);
 			return respond(await updateTask(db, who, id, input.value));
 		}
+		case "GET tasks/:id/events": {
+			const history = await listTaskEvents(db, id);
+			return history.ok
+				? Response.json({ events: history.value })
+				: failure(history.error);
+		}
+		case "GET actors":
+			return Response.json({ actors: await listActors(db) });
+		case "GET labels":
+			return Response.json({ labels: await listLabels(db) });
 		case "GET tasks/:id/next":
 			return respond(await nextTask(db, id));
 		case "POST tasks/:id/relations": {
