@@ -50,6 +50,8 @@ actor の ID は名簿の名前（`owner`、`yukarin` など）で、それ以�
 | `GET /v1/labels`              | ラベルの一覧                                                                                             |
 | `GET /health`                 | 疎通確認                                                                                                 |
 
+書き込み（`POST`・`PATCH`・`PUT`・`DELETE`）は、`Content-Type` が `application/json` のものだけを受ける（それ以外は 415）。Access のログインで来た書き込みは、`Origin` がこのホストと同じものだけを通す（無いか違えば 403）。service token の書き込みには `Origin` を求めない。
+
 ## MCP
 
 `POST /mcp` で受ける。道具は `list_projects`、`create_project`、`link_repo`、`search_tasks`、`get_task`、`create_task`、`update_task`。使い方（起票の手順、状態を動かす時点、探し方）は、`initialize` が返す `instructions` に書いてある。

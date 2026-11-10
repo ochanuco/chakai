@@ -77,10 +77,19 @@ export const call = async (
 	method: string,
 	path: string,
 	body?: unknown,
-	headers: Record<string, string> = {},
+	headers: Record<string, string | null> = {},
 	rawBody?: string,
 ) => {
-	const all: Record<string, string> = { ...headers };
+	// 既定は実際の呼び出し元に合わせる。ブラウザ（email のログイン）は書き込みに Origin を付ける。
+	// null を渡したヘッダーは付けない
+	const all: Record<string, string> = {};
+	const defaults: Record<string, string | null> = {
+		"content-type": method === "GET" ? null : "application/json",
+		origin: as?.email && method !== "GET" ? BASE : null,
+	};
+	for (const [name, value] of Object.entries({ ...defaults, ...headers })) {
+		if (value !== null) all[name.toLowerCase()] = value;
+	}
 	if (as) {
 		all["Cf-Access-Jwt-Assertion"] =
 			as.token ??

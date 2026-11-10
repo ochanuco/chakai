@@ -1,6 +1,7 @@
 import type { JWTVerifyGetKey } from "jose";
 import { accessKeySource, authenticate } from "./auth.ts";
 import { openDb } from "./db/client.ts";
+import { checkWrite } from "./guard.ts";
 import { handleMcp } from "./mcp.ts";
 import { handleRest } from "./rest.ts";
 import { handleUi } from "./ui/index.ts";
@@ -26,7 +27,16 @@ export const createApp = (options: { keys?: JWTVerifyGetKey } = {}) => ({
 			);
 		}
 		const context = { db, who: who.value };
-		if (pathname.startsWith("/v1/")) return handleRest(request, context);
+		if (pathname.startsWith("/v1/")) {
+			const refused = checkWrite(request, who.value);
+			if (refused) {
+				return Response.json(
+					{ error: refused.error.code, message: refused.error.message },
+					{ status: refused.error.status },
+				);
+			}
+			return handleRest(request, context);
+		}
 		if (pathname === "/mcp") return handleMcp(request, context);
 		return handleUi(request, context);
 	},
