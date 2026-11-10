@@ -493,19 +493,15 @@ describe("探す", () => {
 	it("state は重複を除くので、同じ状態をいくつ並べても探せる", async () => {
 		const project = await newProject();
 		const task = await newTask(project.id, { state: "todo" });
-		const state = Array.from({ length: 30 }, () => "todo").join(",");
+		const state = Array.from({ length: 150 }, () => "todo").join(",");
 		const res = await call(
 			owner,
 			"GET",
-			`/v1/tasks?project_id=${project.id}&state=${state}`,
+			`/v1/tasks?project_id=${project.id}&state=${state},doing`,
 		);
 		expect(res.status).toBe(200);
 		const { tasks } = await res.json<{ tasks: TaskJson[] }>();
 		expect(tasks.map((t) => t.id)).toEqual([task.id]);
-		const long = Array.from({ length: 150 }, () => "todo").join(",");
-		expect((await call(owner, "GET", `/v1/tasks?state=${long}`)).status).toBe(
-			400,
-		);
 	});
 
 	it("知らない条件は 400", async () => {

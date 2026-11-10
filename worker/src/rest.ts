@@ -66,7 +66,7 @@ const TaskQuery = v.strictObject({
 	state: v.optional(
 		v.pipe(
 			v.string(),
-			v.maxLength(200),
+			// 重複を除けば 6 状態までに収まり、D1 の bind の上限に届かない
 			v.transform((s) => [...new Set(s.split(","))]),
 			v.array(State),
 		),
