@@ -5,6 +5,7 @@ import { projectRepos, projects } from "./db/schema.ts";
 import { retryOnConflict, writeAll } from "./db/write.ts";
 import { eventInserts } from "./events.ts";
 import { newId } from "./id.ts";
+import { type Link, linksOf } from "./links.ts";
 import { fail, ok, type Result } from "./result.ts";
 
 export type Project = {
@@ -15,6 +16,8 @@ export type Project = {
 	created_at: string;
 	repos: string[];
 };
+
+export type ProjectWithLinks = Project & { links: Link[] };
 
 const toProject = (
 	row: typeof projects.$inferSelect,
@@ -28,18 +31,24 @@ const toProject = (
 	repos,
 });
 
-export const listProjects = async (db: Db): Promise<Project[]> => {
+export const listProjects = async (db: Db): Promise<ProjectWithLinks[]> => {
 	const rows = await db.select().from(projects).orderBy(asc(projects.id));
 	const repos = await db
 		.select()
 		.from(projectRepos)
 		.orderBy(asc(projectRepos.repo));
-	return rows.map((row) =>
-		toProject(
+	const linked = await linksOf(
+		db,
+		"project",
+		rows.map((r) => r.id),
+	);
+	return rows.map((row) => ({
+		...toProject(
 			row,
 			repos.filter((r) => r.projectId === row.id).map((r) => r.repo),
 		),
-	);
+		links: linked.get(row.id) ?? [],
+	}));
 };
 
 export const createProject = async (

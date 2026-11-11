@@ -38,49 +38,66 @@ actor の ID は名簿の名前（`owner`、`yukarin` など）で、それ以�
 - タスク同士の関係は「`from_task` が `kind` で `to_task`」と読む。`discovered_from`（見つけたタスク → 作業していたタスク）、`follows`（続きのタスク → 区切ったタスク）、`replaced_by`（やめたタスク → 作り直したタスク）。
 - 同じタスクへの更新が重なったら、後から書く側が読み直してやり直す。`tasks.revision` は更新のたびに 1 増え、読んだ時点から進んでいる書き込みは D1 の trigger が拒む。`settings` も同じ仕組みで、行は消さない（上の scope に戻した行は `null` を持つ）。
 
+## リンクと GitHub
+
+- リンクはタスクかプロジェクトに付き、役割は `deliverable`（成果物）か `reference`（参考）。種類（`github_pr`・`github_issue`・`notion`・`x`・`url`）は URL から決める。
+- 成果物にできるのは、タスクに付ける GitHub の PR だけ。それ以外は参考で、貼るだけで中身は取りに行かない。
+- 成果物の PR は、状態（`open`・`closed`・`merged`）、draft か、base ブランチ、merge 先がその repo のデフォルトブランチか、レビュー状況、CI の結果を `github_links` に取り込む。取り込みは上書きで、`events` には残さない。
+- PR の付け方は 2 通り。明示的に付けるか、PR の本文に `chakai:<タスクの ID>` と書いて同期に拾わせる。印を拾うのは、タスクのプロジェクトに紐付いた repo の PR だけで、開いている PR と、前回その repo を見た後に更新された PR を見る。
+- プロジェクトに紐付いていない repo の PR を明示的に付けると、その repo をプロジェクトに足す。
+- 成果物の PR を付けたとき、GitHub の PR に `actor:<actor の ID>` ラベルを付ける。明示的に付けたときは付けた actor、印から付けたときはタスクの担当で、agent のときだけ付ける。ラベルが repo に定義されていなければ、作らずにリンクだけ付け、警告を返す。
+- 同期は 1 時間ごとの Cron Trigger と、手動の `POST /v1/sync` で動く。成果物の PR から merge せずに閉じたものを除き、残りがすべてデフォルトブランチに merge されていて、少なくとも 1 つあるとき、タスクを `done` にする。当てるのは、子を持たない `todo`・`doing`・`review` のタスク。手で戻しても、条件を満たしている間は次の同期がまた `done` にする。
+- 同期が動かした書き込み（自動の `done`、印から付けたリンク）は、名簿の `sync`（kind `system`、無効）の操作として `events` に残る。呼び出し元は、Cron なら空、手動なら呼んだ呼び出し元。
+- CI の結果は、PR の head の commit の `statusCheckRollup` から読み、読めなければ Actions の workflow run と commit status から決める。どちらも読めない repo では、結果を不明（`null`）として持つ。
+- GitHub の token（Worker の secret `GITHUB_TOKEN`）が無いときは、同期とラベル付けを止めて警告を返す。リンクを付ける操作を含め、ほかは動く。
+
 ## REST
 
-| 入口                           | 用途                                                                                                                                                         |
-| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `GET /v1/projects`             | プロジェクトと repo の一覧                                                                                                                                   |
-| `POST /v1/projects`            | プロジェクトを作る（`name`、`description`）                                                                                                                  |
-| `POST /v1/projects/:id/repos`  | repo を紐付ける（`repo` は `owner/name`）                                                                                                                    |
-| `GET /v1/tasks`                | タスクを探す（`project_id`、`q`、`state`（カンマ区切り）、`assignee_id`、`parent_id`、`label`、`awaiting_triage`、`limit`）                                  |
-| `POST /v1/tasks`               | 起票する（`project_id`、`title`、`body`、`parent_id`、`state`、`assignee_id`、`labels`、`discovered_from`）                                                  |
-| `GET /v1/tasks/:id`            | タスクを、関係（`relations`）と一緒に読む                                                                                                                    |
-| `PATCH /v1/tasks/:id`          | 更新する（`title`、`body`、`state`、`waiting_on`、`assignee_id`、`labels`、`order`）                                                                         |
-| `GET /v1/tasks/:id/next`       | 親の子孫のうち、木の順（深さ優先、同じ親の中は `order_key` の順）で最初の `todo` を `task` に返す。無ければ `null`。`descendant_states` は子孫の状態ごとの数 |
-| `POST /v1/tasks/:id/relations` | `:id` のタスクから関係を付ける（`kind`、`to_task`、`run_id`）。`run_id` は `discovered_from` にだけ付けられ、`to_task` かその祖先を回した run に限る         |
-| `POST /v1/tasks/:id/triage`    | 仕分け待ちのタスクを `backlog` のまま仕分け済みにする。owner だけ                                                                                            |
-| `POST /v1/runs`                | 席の実行記録を始める（`task_id`、`seat`、`model`、`hishaku_no`）。repo の無いプロジェクトのタスクは拒む                                                      |
-| `POST /v1/runs/:id/end`        | 実行記録を閉じる                                                                                                                                             |
-| `GET /v1/tasks/:id/runs`       | タスクを回した実行記録を、始めた順に読む                                                                                                                     |
-| `GET /v1/settings/:scope`      | `:scope`（`global` かプロジェクトの ID）で効く設定と、その出どころ                                                                                           |
-| `PUT /v1/settings/:scope`      | 設定を書く（`key`、`value`。`value` が `null` なら上の scope の値に戻す）。owner だけ                                                                        |
-| `GET /v1/tasks/:id/events`     | タスクの履歴を古い順に読む（誰が、どの呼び出し元から、何を、前の値と後の値）                                                                                 |
-| `GET /v1/actors`               | 名簿を読む（email は返さない）                                                                                                                               |
-| `GET /v1/labels`               | ラベルの一覧                                                                                                                                                 |
-| `GET /health`                  | 疎通確認                                                                                                                                                     |
+| 入口                           | 用途                                                                                                                                                                    |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /v1/projects`             | プロジェクトと repo、参考リンク（`links`）の一覧                                                                                                                        |
+| `POST /v1/projects`            | プロジェクトを作る（`name`、`description`）                                                                                                                             |
+| `POST /v1/projects/:id/repos`  | repo を紐付ける（`repo` は `owner/name`）                                                                                                                               |
+| `GET /v1/tasks`                | タスクを探す（`project_id`、`q`、`state`（カンマ区切り）、`assignee_id`、`parent_id`、`label`、`awaiting_triage`、`limit`）                                             |
+| `POST /v1/tasks`               | 起票する（`project_id`、`title`、`body`、`parent_id`、`state`、`assignee_id`、`labels`、`discovered_from`）                                                             |
+| `GET /v1/tasks/:id`            | タスクを、関係（`relations`）とリンク（`links`。成果物の PR は `github` に取り込んだ状態を持つ）と一緒に読む                                                            |
+| `PATCH /v1/tasks/:id`          | 更新する（`title`、`body`、`state`、`waiting_on`、`assignee_id`、`labels`、`order`）                                                                                    |
+| `GET /v1/tasks/:id/next`       | 親の子孫のうち、木の順（深さ優先、同じ親の中は `order_key` の順）で最初の `todo` を `task` に返す。無ければ `null`。`descendant_states` は子孫の状態ごとの数            |
+| `POST /v1/tasks/:id/relations` | `:id` のタスクから関係を付ける（`kind`、`to_task`、`run_id`）。`run_id` は `discovered_from` にだけ付けられ、`to_task` かその祖先を回した run に限る                    |
+| `POST /v1/tasks/:id/triage`    | 仕分け待ちのタスクを `backlog` のまま仕分け済みにする。owner だけ                                                                                                       |
+| `POST /v1/tasks/:id/links`     | タスクにリンクを付ける（`url`、`role`、`title`、`note`）。取り込みやラベル付けができなかった理由は `warnings` に入る                                                    |
+| `POST /v1/projects/:id/links`  | プロジェクトに参考リンクを付ける（`url`、`role` は `reference`、`title`、`note`）                                                                                       |
+| `DELETE /v1/links/:id`         | リンクを消す。前の値を履歴に残す                                                                                                                                        |
+| `POST /v1/sync`                | GitHub と同期する。`synced`（取り込んだ PR の数）、`linked`（印から付けたリンク）、`done`（done にしたタスク）、`warnings` を返す。token が無ければ `skipped` が `true` |
+| `POST /v1/runs`                | 席の実行記録を始める（`task_id`、`seat`、`model`、`hishaku_no`）。repo の無いプロジェクトのタスクは拒む                                                                 |
+| `POST /v1/runs/:id/end`        | 実行記録を閉じる                                                                                                                                                        |
+| `GET /v1/tasks/:id/runs`       | タスクを回した実行記録を、始めた順に読む                                                                                                                                |
+| `GET /v1/settings/:scope`      | `:scope`（`global` かプロジェクトの ID）で効く設定と、その出どころ                                                                                                      |
+| `PUT /v1/settings/:scope`      | 設定を書く（`key`、`value`。`value` が `null` なら上の scope の値に戻す）。owner だけ                                                                                   |
+| `GET /v1/tasks/:id/events`     | タスクの履歴を古い順に読む（誰が、どの呼び出し元から、何を、前の値と後の値）                                                                                            |
+| `GET /v1/actors`               | 名簿を読む（email は返さない）                                                                                                                                          |
+| `GET /v1/labels`               | ラベルの一覧                                                                                                                                                            |
+| `GET /health`                  | 疎通確認                                                                                                                                                                |
 
 書き込み（`POST`・`PATCH`・`PUT`・`DELETE`）は、`Content-Type` が `application/json` のものだけを受ける（それ以外は 415）。Access のログインで来た書き込みは、`Origin` がこのホストと同じものだけを通す（無いか違えば 403）。service token の書き込みには `Origin` を求めない。
 
 ## MCP
 
-`POST /mcp` で受ける。道具は `list_projects`、`create_project`、`link_repo`、`search_tasks`、`get_task`、`create_task`、`update_task`、`relate_tasks`、`next_task`、`start_run`、`end_run`。使い方（起票の手順、状態を動かす時点、途中で分けるときの扱い、探し方）は、`initialize` が返す `instructions` に書いてある。`next_task`、`start_run`、`end_run` は、席を回す側のコードが呼ぶ。仕分けと設定の変更は owner の操作なので、道具には出さない。
+`POST /mcp` で受ける。道具は `list_projects`、`create_project`、`link_repo`、`search_tasks`、`get_task`、`create_task`、`update_task`、`relate_tasks`、`add_link`、`remove_link`、`sync`、`next_task`、`start_run`、`end_run`。使い方（起票の手順、状態を動かす時点、途中で分けるときの扱い、PR と資料の付け方、探し方）は、`initialize` が返す `instructions` に書いてある。`next_task`、`start_run`、`end_run` は、席を回す側のコードが呼ぶ。仕分けと設定の変更は owner の操作なので、道具には出さない。
 
 ## Web UI
 
 owner が Access にログインして `https://chakai.chanu.co/` を開く。service token の呼び出しと、owner 以外の人には 403 を返す。
 
-| 画面            | 中身                                                                                                                      |
-| --------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `/`             | owner の番（`review` のタスクを、プロジェクトをまたいで待たせている順に）と、プロジェクトの一覧                           |
-| `/projects/:id` | タスクの親子ツリー。`?state=` で絞る（無ければ `done` と `dropped` を除き、`all` ですべて）                               |
-| `/tasks/:id`    | 本文、子タスク、関係、実行記録、状態・担当・ラベルの変更、履歴                                                            |
-| `/triage`       | 仕分け待ち（プロジェクトをまたいで、起票の古い順に）。`todo` に上げる、`dropped` にする、`backlog` に残す、のどれかを選ぶ |
-| `/settings`     | `max_self_todo_depth` の、全体の値とプロジェクトごとの上書き。効いている値と出どころ（既定・全体・プロジェクト）を出す    |
+| 画面            | 中身                                                                                                                              |
+| --------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `/`             | owner の番（`review` のタスクを、プロジェクトをまたいで待たせている順に）と、プロジェクトの一覧                                   |
+| `/projects/:id` | プロジェクトの参考リンクと、タスクの親子ツリー。`?state=` で絞る（無ければ `done` と `dropped` を除き、`all` ですべて）           |
+| `/tasks/:id`    | 本文、子タスク、成果物の PR（状態・レビュー・CI・最後に同期した時刻）、参考リンク、関係、実行記録、状態・担当・ラベルの変更、履歴 |
+| `/triage`       | 仕分け待ち（プロジェクトをまたいで、起票の古い順に）。`todo` に上げる、`dropped` にする、`backlog` に残す、のどれかを選ぶ         |
+| `/settings`     | `max_self_todo_depth` の、全体の値とプロジェクトごとの上書き。効いている値と出どころ（既定・全体・プロジェクト）を出す            |
 
-状態は一覧の各行でも変えられ、並びは行の ↑ と ↓ で、同じ親の隣のタスクと入れ替える。仕分け待ちの件数は、どの画面のナビゲーションにも出る。起票と、件名・本文の編集は画面に無い。
+状態は一覧の各行でも変えられ、並びは行の ↑ と ↓ で、同じ親の隣のタスクと入れ替える。仕分け待ちの件数は、どの画面のナビゲーションにも出る。起票と、件名・本文の編集、リンクの追加と削除は画面に無い。
 
 ## 開発
 
@@ -139,5 +156,7 @@ pnpm run roster:add-caller --remote
 `deploy` workflow を手動（`workflow_dispatch`）で実行する。Environment `production` の承認の後に、`worker/scripts/deploy.sh` が未適用の D1 migration を当ててから `wrangler deploy` する。migration の前後で `worker/scripts/d1-guard.mjs` がテーブルの行数を比べ、行が減ったテーブルか、行が入ったまま消えたテーブルがあれば、Worker を出さずに止める。意図した削除や改名は、migration に `-- deploy: allow-row-loss <table>` と書いて宣言する。ロールバックは、main 上のコミット SHA を指定して実行する。
 
 認証情報は Environment `production` の secret `OP_SA_DEPLOY` から 1Password の `gh-deploy/cloudflare-workers` を読む（`.github/deploy/production.env.op`）。
+
+GitHub の token は、chakai 専用の fine-grained PAT（Pull requests・Commit statuses・Actions が read、Issues が write）を 1Password の `gh-deploy/chakai-worker` の `github_token` に置く。デプロイのたびに Worker の secret `GITHUB_TOKEN` に反映する。`actor:*` ラベルの定義は `ochanuco/chabatake` が持つ。
 
 初めて出すときは、デプロイで migration が当たった後に、`roster:init` で名簿を入れる。

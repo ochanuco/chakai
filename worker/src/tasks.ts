@@ -5,6 +5,7 @@ import {
 	eq,
 	gt,
 	inArray,
+	isNotNull,
 	isNull,
 	lt,
 	ne,
@@ -28,6 +29,7 @@ import {
 import { retryOnConflict, writeAll } from "./db/write.ts";
 import { type Change, eventInserts } from "./events.ts";
 import { newId } from "./id.ts";
+import { type Link, linksOf } from "./links.ts";
 import { projectExists } from "./projects.ts";
 import {
 	checkRelation,
@@ -57,6 +59,7 @@ export type Task = {
 };
 
 export type TaskWithRelations = Task & { relations: Relation[] };
+export type TaskDetail = TaskWithRelations & { links: Link[] };
 
 type TaskRow = typeof tasks.$inferSelect;
 
@@ -98,12 +101,13 @@ const findRow = async (db: Db, id: string) =>
 export const getTask = async (
 	db: Db,
 	id: string,
-): Promise<Result<TaskWithRelations>> => {
+): Promise<Result<TaskDetail>> => {
 	const row = await findRow(db, id);
 	if (!row) return fail(404, "task_not_found", "タスクが無い");
 	return ok({
 		...toTask(row, (await labelsOf(db, [id])).get(id) ?? []),
 		relations: await relationsOf(db, id),
+		links: (await linksOf(db, "task", [id])).get(id) ?? [],
 	});
 };
 
@@ -424,6 +428,38 @@ export const CHILDREN_SETTLED = "子タスクがすべて片付いた";
  * 子の更新と同じ batch の、子の更新より後に入れる。条件を書き込みの時点の行で確かめるので、
  * 兄弟が同時に片付いても、後から書く側が必ず親を動かす
  */
+/**
+ * 条件に合うタスクの行から、遷移の履歴を 1 行作る文。条件を書き込みの時点の行で確かめるので、
+ * 同じ batch の、タスクを動かす文より前に入れる（before を動かす前の行から取るため）
+ */
+const transitionEvent = (
+	db: Db,
+	who: Principal,
+	at: string,
+	where: SQL | undefined,
+	field: string,
+	before: SQL,
+	after: string | null,
+) =>
+	db.insert(events).select(
+		db
+			.select({
+				id: sql<string>`${newId()}`.as("id"),
+				entity: sql<string>`'task'`.as("entity"),
+				entityId: sql<string>`${tasks.id}`.as("entity_id"),
+				actorId: sql<string>`${who.actorId}`.as("actor_id"),
+				callerId: sql<string | null>`${who.callerId}`.as("caller_id"),
+				at: sql<string>`${at}`.as("at"),
+				field: sql<string>`${field}`.as("field"),
+				before: sql<string | null>`${before}`.as("before"),
+				after: sql<
+					string | null
+				>`${after === null ? null : JSON.stringify(after)}`.as("after"),
+			})
+			.from(tasks)
+			.where(where),
+	);
+
 const parentToReview = (
 	db: Db,
 	who: Principal,
@@ -438,27 +474,25 @@ const parentToReview = (
 			WHERE c.parent_id = ${parentId} AND c.state NOT IN ('done', 'dropped')
 		)`,
 	);
-	const event = (field: string, before: SQL, after: string) =>
-		db.insert(events).select(
-			db
-				.select({
-					id: sql<string>`${newId()}`.as("id"),
-					entity: sql<string>`'task'`.as("entity"),
-					entityId: sql<string>`${tasks.id}`.as("entity_id"),
-					actorId: sql<string>`${who.actorId}`.as("actor_id"),
-					callerId: sql<string | null>`${who.callerId}`.as("caller_id"),
-					at: sql<string>`${at}`.as("at"),
-					field: sql<string>`${field}`.as("field"),
-					before: sql<string | null>`${before}`.as("before"),
-					after: sql<string>`${JSON.stringify(after)}`.as("after"),
-				})
-				.from(tasks)
-				.where(settled),
-		);
 	return [
-		// 親を動かす前の行から before を取るので、events を先に書く
-		event("state", sql`json_quote(${tasks.state})`, "review"),
-		event("waiting_on", sql`NULL`, CHILDREN_SETTLED),
+		transitionEvent(
+			db,
+			who,
+			at,
+			settled,
+			"state",
+			sql`json_quote(${tasks.state})`,
+			"review",
+		),
+		transitionEvent(
+			db,
+			who,
+			at,
+			settled,
+			"waiting_on",
+			sql`NULL`,
+			CHILDREN_SETTLED,
+		),
 		db
 			.update(tasks)
 			.set({
@@ -469,6 +503,76 @@ const parentToReview = (
 			})
 			.where(settled),
 	];
+};
+
+const DELIVERABLES = sql`FROM links l JOIN github_links g ON g.link_id = l.id
+	WHERE l.owner_type = 'task' AND l.owner_id = "tasks"."id" AND l.role = 'deliverable'`;
+
+/**
+ * 成果物の PR から done にしてよいタスク。merge せずに閉じた PR を除き、残りがすべて
+ * デフォルトブランチに merge されていて、少なくとも 1 つある。状態をまだ取り込めていない PR は残りに数える。
+ * 子を持つタスクは、目的を果たしたかを子の状態から決められないので、当てない
+ */
+const deliveredByPulls = and(
+	inArray(tasks.state, ["todo", "doing", "review"]),
+	sql`NOT EXISTS (SELECT 1 FROM tasks c WHERE c.parent_id = "tasks"."id")`,
+	sql`EXISTS (SELECT 1 ${DELIVERABLES} AND g.state = 'merged' AND g.merged_into_default = 1)`,
+	sql`NOT EXISTS (SELECT 1 ${DELIVERABLES} AND (
+		g.state IS NULL OR g.state = 'open'
+		OR (g.state = 'merged' AND g.merged_into_default IS NOT 1)
+	))`,
+);
+
+/**
+ * 成果物の PR が条件を満たしたタスクを done にし、done にしたタスクの ID を返す。
+ * 親を review にする規則も、手で done にしたときと同じく続けて当てる
+ */
+export const completeDelivered = async (
+	db: Db,
+	who: Principal,
+): Promise<string[]> => {
+	const candidates = await db
+		.select({ id: tasks.id, parentId: tasks.parentId })
+		.from(tasks)
+		.where(deliveredByPulls);
+	const done: string[] = [];
+	for (const task of candidates) {
+		const at = new Date().toISOString();
+		const delivered = and(eq(tasks.id, task.id), deliveredByPulls);
+		await writeAll(db, [
+			transitionEvent(
+				db,
+				who,
+				at,
+				delivered,
+				"state",
+				sql`json_quote(${tasks.state})`,
+				"done",
+			),
+			transitionEvent(
+				db,
+				who,
+				at,
+				and(delivered, isNotNull(tasks.waitingOn)),
+				"waiting_on",
+				sql`json_quote(${tasks.waitingOn})`,
+				null,
+			),
+			db
+				.update(tasks)
+				.set({
+					state: "done",
+					waitingOn: null,
+					revision: sql`${tasks.revision} + 1`,
+					updatedAt: at,
+				})
+				.where(delivered),
+			...(task.parentId ? parentToReview(db, who, at, task.parentId) : []),
+		]);
+		// 読んでから書くまでに条件が外れていたら、どの文も当たらない
+		if ((await findRow(db, task.id))?.state === "done") done.push(task.id);
+	}
+	return done;
 };
 
 export const updateTask = async (

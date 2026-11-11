@@ -1,14 +1,17 @@
 import * as v from "valibot";
 import type { Principal } from "./auth.ts";
 import type { Db } from "./db/client.ts";
-import { RELATION_KINDS, TASK_STATES } from "./db/schema.ts";
+import { LINK_ROLES, RELATION_KINDS, TASK_STATES } from "./db/schema.ts";
+import type { GitHub } from "./github.ts";
 import { listTaskEvents } from "./history.ts";
+import { addLink, removeLink } from "./links.ts";
 import { createProject, linkRepo, listProjects } from "./projects.ts";
 import { relateTasks } from "./relations.ts";
 import { type Failure, fail, type Result } from "./result.ts";
 import { listActors, listLabels } from "./roster.ts";
 import { endRun, listRuns, startRun } from "./runs.ts";
 import { getSettings, putSetting, SETTING_KEYS } from "./settings.ts";
+import { runSync } from "./sync.ts";
 import {
 	createTask,
 	getTask,
@@ -20,7 +23,8 @@ import {
 	updateTask,
 } from "./tasks.ts";
 
-export type RestContext = { db: Db; who: Principal };
+/** github は、token が無いとき null。同期とラベル付けだけが止まる */
+export type RestContext = { db: Db; who: Principal; github: GitHub | null };
 
 const Text = (max: number) =>
 	v.pipe(v.string(), v.trim(), v.minLength(1), v.maxLength(max));
@@ -56,6 +60,13 @@ const TaskInput = v.strictObject({
 	discovered_from: v.optional(
 		v.strictObject({ task_id: Id, run_id: v.optional(Id) }),
 	),
+});
+
+const LinkInput = v.strictObject({
+	url: v.pipe(v.string(), v.trim(), v.minLength(1), v.maxLength(2000)),
+	role: v.picklist(LINK_ROLES),
+	title: v.optional(v.pipe(v.string(), v.trim(), v.maxLength(500)), ""),
+	note: v.optional(v.pipe(v.string(), v.maxLength(10000)), ""),
 });
 
 const RelationInput = v.strictObject({
@@ -165,7 +176,7 @@ const body = async <S extends v.GenericSchema>(
 /** 機能の正。MCP もここを通るので、events に残る内容は入口によらず同じになる */
 export const handleRest = async (
 	request: Request,
-	{ db, who }: RestContext,
+	{ db, who, github }: RestContext,
 ): Promise<Response> => {
 	const url = new URL(request.url);
 	const segments = url.pathname.split("/").filter(Boolean).slice(1);
@@ -189,6 +200,20 @@ export const handleRest = async (
 			if (!input.ok) return failure(input.error);
 			return respond(await linkRepo(db, who, id, input.value.repo));
 		}
+		case "POST projects/:id/links":
+		case "POST tasks/:id/links": {
+			const input = await body(request, LinkInput);
+			if (!input.ok) return failure(input.error);
+			const type = segments[0] === "tasks" ? "task" : "project";
+			return respond(
+				await addLink(db, who, github, { type, id }, input.value),
+				201,
+			);
+		}
+		case "DELETE links/:id":
+			return respond(await removeLink(db, who, id));
+		case "POST sync":
+			return Response.json(await runSync(db, github, who.callerId));
 		case "GET tasks": {
 			const query = parse(TaskQuery, Object.fromEntries(url.searchParams));
 			if (!query.ok) return failure(query.error);

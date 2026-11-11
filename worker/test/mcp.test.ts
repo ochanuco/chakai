@@ -101,7 +101,7 @@ describe("POST /mcp", () => {
 		}
 	});
 
-	it("tools/list は 11 の道具を返し、create_task は先に探すよう書いてある", async () => {
+	it("tools/list は 14 の道具を返し、create_task は先に探すよう書いてある", async () => {
 		const res = await rpc("tools/list");
 		const tools = res.result?.tools as {
 			name: string;
@@ -117,6 +117,9 @@ describe("POST /mcp", () => {
 			"create_task",
 			"update_task",
 			"relate_tasks",
+			"add_link",
+			"remove_link",
+			"sync",
 			"next_task",
 			"start_run",
 			"end_run",

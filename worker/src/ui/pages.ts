@@ -1,5 +1,6 @@
 import { TASK_STATES, type TaskState } from "../db/schema.ts";
 import type { TaskEvent } from "../history.ts";
+import type { Link } from "../links.ts";
 import type { Actor, Label } from "../roster.ts";
 import type { SettingSource, Settings } from "../settings.ts";
 import type {
@@ -58,6 +59,10 @@ ul.tree ul{margin-left:14px;padding-left:10px;border-left:2px solid var(--line)}
 .row.context{opacity:.55}
 .row.closed .title{color:var(--muted)}
 .row .rel{flex:0 0 7.5em;color:var(--muted);font-size:.85rem}
+.pr{display:inline-block;border-radius:6px;padding:0 6px;font-size:.78rem;font-weight:600;white-space:nowrap;background:var(--backlog-bg);color:var(--backlog-fg)}
+.pr.good{background:var(--done-bg);color:var(--done-fg)}
+.pr.bad{background:var(--alert-bg);color:var(--alert-fg)}
+.pr.wait{background:var(--doing-bg);color:var(--doing-fg)}
 .actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
 .actions button,button.plain{font:inherit;padding:4px 12px;border-radius:6px;border:1px solid var(--line);background:var(--card);color:var(--fg);cursor:pointer}
 .actions button:disabled,button.plain:disabled{opacity:.5;cursor:default}
@@ -159,6 +164,61 @@ const taskRow = (task: TaskRow, o: RowOptions) => {
 			? html`<span class="who">担当 ${nameOf(o.names, task.assigneeId)}</span>`
 			: ""
 	}${o.project ? html`<a class="who" href="/projects/${o.project.id}">${o.project.name}</a>` : ""}${move}${waiting}</div>`;
+};
+
+type Tone = "good" | "bad" | "wait" | "";
+
+const pill = (text: string, tone: Tone) =>
+	html`<span class="pr${tone ? ` ${tone}` : ""}">${text}</span>`;
+
+const REVIEW_PILLS: Record<string, [string, Tone]> = {
+	approved: ["レビュー 承認", "good"],
+	changes_requested: ["レビュー 修正依頼", "bad"],
+	review_required: ["レビュー 待ち", "wait"],
+	none: ["レビュー なし", ""],
+};
+
+const CHECKS_PILLS: Record<string, [string, Tone]> = {
+	success: ["CI 成功", "good"],
+	failure: ["CI 失敗", "bad"],
+	pending: ["CI 実行中", "wait"],
+	none: ["CI なし", ""],
+};
+
+/** リンク先は AI が書いた URL なので、http と https だけを href にする */
+const linkTitle = (link: Link) => {
+	const text = link.title || link.url;
+	return /^https?:\/\//.test(link.url)
+		? html`<a class="title" href="${link.url}" rel="noreferrer">${text}</a>`
+		: html`<span class="title">${text}</span>`;
+};
+
+const deliverableRow = (link: Link, now: Date) => {
+	const g = link.github;
+	if (!g) return html`<div class="row">${linkTitle(link)}</div>`;
+	const state =
+		g.state === null
+			? pill("未取得", "")
+			: g.state === "merged"
+				? pill(
+						g.merged_into_default ? "merged" : `merged（${g.base_branch} へ）`,
+						g.merged_into_default ? "good" : "wait",
+					)
+				: g.state === "closed"
+					? pill("closed", "")
+					: pill(g.draft ? "open（draft）" : "open", "wait");
+	const [review, reviewTone] = REVIEW_PILLS[g.review ?? ""] ?? ["", ""];
+	const [checks, checksTone] = CHECKS_PILLS[g.checks ?? ""] ?? ["CI 不明", ""];
+	return html`<div class="row">${state}${linkTitle(link)}<span class="who">${g.repo}#${g.number}${g.base_branch ? html` → ${g.base_branch}` : ""}</span>${review ? pill(review, reviewTone) : ""}${g.state === null ? "" : pill(checks, checksTone)}<span class="who">${g.synced_at ? html`同期 ${when(g.synced_at, now)}` : "まだ同期していない"}</span></div>`;
+};
+
+const referenceRow = (link: Link) =>
+	html`<div class="row">${linkTitle(link)}<span class="who">${link.kind}</span>${link.note ? html`<div class="waiting muted">${link.note}</div>` : ""}</div>`;
+
+const linkSections = (links: Link[], now: Date) => {
+	const deliverables = links.filter((l) => l.role === "deliverable");
+	const references = links.filter((l) => l.role === "reference");
+	return html`${deliverables.length > 0 ? html`<h2>成果物の PR</h2><div>${deliverables.map((l) => deliverableRow(l, now))}</div>` : ""}${references.length > 0 ? html`<h2>参考リンク</h2><div>${references.map(referenceRow)}</div>` : ""}`;
 };
 
 /** どの画面にも出すもの。triage は仕分け待ちの件数 */
@@ -382,6 +442,7 @@ export const renderProject = (
 		html`<h1>${project.name}</h1>
 ${project.description ? html`<p class="body muted">${project.description}</p>` : ""}
 ${view.repos.length > 0 ? html`<p class="muted">repo: ${view.repos.join("、")}</p>` : ""}
+${linkSections(view.links, now)}
 <div class="chips">${chip("進行中", ACTIVE_STATES)}${chip("すべて", [...TASK_STATES], tasks.length)}</div>
 <div class="chips">${TASK_STATES.map(toggle)}</div>
 ${roots.length > 0 ? branch(roots, true) : html`<p class="muted">当てはまるタスクは無い。</p>`}`,
@@ -421,6 +482,14 @@ const change = (event: TaskEvent, names: Names): Markup => {
 		case "relation": {
 			const kind = (after as { kind?: unknown } | null)?.kind;
 			return html`関係を付けた${typeof kind === "string" ? html`（${kind}）` : ""}`;
+		}
+		case "link": {
+			const link = (after ?? before) as {
+				url?: unknown;
+				role?: unknown;
+			} | null;
+			const role = link?.role === "deliverable" ? "成果物の PR" : "参考リンク";
+			return html`${role}を${after ? "付けた" : "消した"}${typeof link?.url === "string" ? html`（${link.url}）` : ""}`;
 		}
 		case "state":
 			return fromTo((v) => (isState(v) ? badge(v) : plain(v)));
@@ -499,6 +568,7 @@ ${
 			)}</div>`
 		: ""
 }
+${linkSections(view.links, now)}
 ${view.relations.length > 0 ? html`<h2>関係</h2><div>${view.relations.map(relationRow)}</div>` : ""}
 ${
 	view.runs.length > 0

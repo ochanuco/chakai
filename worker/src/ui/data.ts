@@ -12,6 +12,7 @@ import {
 	tasks,
 } from "../db/schema.ts";
 import { chunked, reviewSince } from "../history.ts";
+import { type Link, linksOf } from "../links.ts";
 import { relationsOf } from "../relations.ts";
 import { listRuns, type Run } from "../runs.ts";
 import { type Settings, settingsOfScopes } from "../settings.ts";
@@ -157,6 +158,7 @@ export type ProjectView = {
 	project: ProjectRow;
 	repos: string[];
 	tasks: TaskRow[];
+	links: Link[];
 };
 
 /** プロジェクトのタスクを、並び順にすべて返す。ツリーを途中で切らないよう、件数は絞らない */
@@ -170,7 +172,7 @@ export const loadProject = async (
 		.where(eq(projects.id, projectId))
 		.limit(1);
 	if (!project) return null;
-	const [repos, rows, pairs] = await Promise.all([
+	const [repos, rows, pairs, linked] = await Promise.all([
 		db
 			.select({ repo: projectRepos.repo })
 			.from(projectRepos)
@@ -188,11 +190,13 @@ export const loadProject = async (
 			.innerJoin(tasks, eq(tasks.id, taskLabels.taskId))
 			.where(eq(tasks.projectId, projectId))
 			.orderBy(asc(labels.name)),
+		linksOf(db, "project", [projectId]),
 	]);
 	return {
 		project,
 		repos: repos.map((r) => r.repo),
 		tasks: withLabels(rows, pairs),
+		links: linked.get(projectId) ?? [],
 	};
 };
 
@@ -205,6 +209,7 @@ export type TaskView = {
 	reviewSince: string | null;
 	relations: RelatedTask[];
 	runs: Run[];
+	links: Link[];
 };
 
 export type RelatedTask = {
@@ -295,9 +300,10 @@ export const loadTask = async (
 		await labelPairs(db, [row.id, ...childRows.map((c) => c.id)]),
 	);
 	if (!task) return null;
-	const [relations, ran] = await Promise.all([
+	const [relations, ran, linked] = await Promise.all([
 		loadRelations(db, taskId),
 		listRuns(db, taskId),
+		linksOf(db, "task", [taskId]),
 	]);
 	return {
 		task,
@@ -306,6 +312,7 @@ export const loadTask = async (
 		children,
 		relations,
 		runs: ran.ok ? ran.value : [],
+		links: linked.get(taskId) ?? [],
 		reviewSince:
 			row.state === "review"
 				? ((await reviewSince(db, [row.id])).get(row.id) ?? null)

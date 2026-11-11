@@ -1,5 +1,5 @@
 import * as v from "valibot";
-import { RELATION_KINDS, TASK_STATES } from "./db/schema.ts";
+import { LINK_ROLES, RELATION_KINDS, TASK_STATES } from "./db/schema.ts";
 import { handleRest, type RestContext } from "./rest.ts";
 import { SEARCH_DEFAULT_LIMIT, SEARCH_MAX_LIMIT } from "./tasks.ts";
 
@@ -33,6 +33,10 @@ update_task の state を、その時点で変える。あとでまとめて直�
 - 大きすぎた（範囲は同じ）: create_task の parent_id に今のタスクを渡し、子を todo で作る。今のタスクは doing のまま残す。深さの上限で拒まれたら、backlog で作るか、今のタスクを review にする。
 - 途中まで終わり、区切れる: 残りを新しいタスクにし、relate_tasks で新しいタスクから今のタスクへ follows を付けてから、今のタスクを done にする。
 - 方針が変わり、作り直す: 新しいタスクを作り、relate_tasks で今のタスクから新しいタスクへ replaced_by を付けてから、今のタスクを dropped にする。
+
+## PR と資料を付ける
+- PR を出したら、本文に chakai:<タスクの ID> と書く。書けないときは、add_link を role: "deliverable" で呼ぶ。成果物の PR がすべて merge されると、同期がタスクを done にする。
+- 参考にした Issue や資料は、add_link を role: "reference" で付ける。
 
 ## 探す
 - 次にやるもの: search_tasks を project_id と state: ["todo"] で呼ぶ。返る順が並び順なので、先頭が次のタスク。
@@ -120,7 +124,8 @@ export const TOOLS: {
 	{
 		name: "list_projects",
 		title: "プロジェクトの一覧",
-		description: "プロジェクトと、それぞれに紐付いた repo を返す。",
+		description:
+			"プロジェクトと、それぞれに紐付いた repo、参考リンク（links）を返す。",
 		inputSchema: {
 			type: "object",
 			properties: {},
@@ -207,7 +212,7 @@ export const TOOLS: {
 		name: "get_task",
 		title: "タスクを読む",
 		description:
-			"ID のタスクを、ラベルと、他のタスクとの関係（relations。このタスクが from か to のもの）と一緒に返す。",
+			"ID のタスクを、ラベルと、他のタスクとの関係（relations。このタスクが from か to のもの）、リンク（links。成果物の PR は github に取り込んだ状態を持つ）と一緒に返す。",
 		inputSchema: {
 			type: "object",
 			properties: { task_id: id },
@@ -321,6 +326,69 @@ export const TOOLS: {
 			path: `/v1/tasks/${segment(args, "from_task")}/relations`,
 			body: without(args, "from_task"),
 		}),
+	},
+	{
+		name: "add_link",
+		title: "リンクを付ける",
+		description:
+			"タスクかプロジェクトにリンクを付ける。task_id か project_id のどちらか 1 つを渡す。deliverable（成果物）にできるのは、タスクに付ける GitHub の PR だけで、状態を同期で取り込み、AI が付けた PR には actor のラベルを付ける。Issue、Notion、X、そのほかの URL は reference（参考）で、中身は取りに行かないので title を書く。付けられたが取り込みやラベル付けができなかったときは、warnings に理由が入る。",
+		inputSchema: {
+			type: "object",
+			properties: {
+				task_id: id,
+				project_id: id,
+				url: { type: "string", minLength: 1, maxLength: 2000 },
+				role: { type: "string", enum: LINK_ROLES },
+				title: { type: "string", maxLength: 500 },
+				note: { type: "string", maxLength: 10000 },
+			},
+			required: ["url", "role"],
+			additionalProperties: false,
+		},
+		annotations: { ...WRITE, idempotentHint: true, openWorldHint: true },
+		rest: (args) => {
+			if ((args.task_id === undefined) === (args.project_id === undefined)) {
+				throw new InvalidArguments(
+					"task_id か project_id のどちらか 1 つを渡す",
+				);
+			}
+			const owner = args.task_id === undefined ? "project" : "task";
+			return {
+				method: "POST",
+				path: `/v1/${owner}s/${segment(args, `${owner}_id`)}/links`,
+				body: without(without(args, "task_id"), "project_id"),
+			};
+		},
+	},
+	{
+		name: "remove_link",
+		title: "リンクを消す",
+		description:
+			"リンクを消す。link_id は get_task か list_projects の links にある。PR の本文に印が残っている成果物は、次の同期でまた付く。",
+		inputSchema: {
+			type: "object",
+			properties: { link_id: id },
+			required: ["link_id"],
+			additionalProperties: false,
+		},
+		annotations: { ...WRITE, destructiveHint: true, idempotentHint: true },
+		rest: (args) => ({
+			method: "DELETE",
+			path: `/v1/links/${segment(args, "link_id")}`,
+		}),
+	},
+	{
+		name: "sync",
+		title: "GitHub と同期する",
+		description:
+			"1 時間ごとの同期を、今すぐ動かす。PR の本文の印からリンクを付け、成果物の PR の状態を取り込み、条件を満たしたタスクを done にする。",
+		inputSchema: {
+			type: "object",
+			properties: {},
+			additionalProperties: false,
+		},
+		annotations: { ...WRITE, idempotentHint: true, openWorldHint: true },
+		rest: () => ({ method: "POST", path: "/v1/sync" }),
 	},
 	{
 		name: "next_task",

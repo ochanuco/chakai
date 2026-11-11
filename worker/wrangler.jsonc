@@ -25,6 +25,10 @@
 		"ACCESS_TEAM_DOMAIN": "chanuco.cloudflareaccess.com",
 		"ACCESS_AUD": "fe483e2f05e83754e23561ebc29c2d0604a3669ddbc69e3217df443b8dec34eb"
 	},
+	// GitHub との同期。1 時間ごと
+	"triggers": {
+		"crons": ["0 * * * *"]
+	},
 	"observability": {
 		"enabled": true
 	}
