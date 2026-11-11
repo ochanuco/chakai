@@ -124,6 +124,7 @@ export type TaskFilter = {
 	label?: string;
 	awaiting_triage?: boolean;
 	limit: number;
+	cursor?: { project_id: string; order_key: string };
 };
 
 const createdByAgent = (db: Db) =>
@@ -141,7 +142,7 @@ const escapeLike = (s: string) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
 export const searchTasks = async (
 	db: Db,
 	filter: TaskFilter,
-): Promise<Task[]> => {
+): Promise<{ tasks: Task[]; next_cursor: string | null }> => {
 	const where: (SQL | undefined)[] = [];
 	if (filter.project_id) where.push(eq(tasks.projectId, filter.project_id));
 	if (filter.q) {
@@ -170,17 +171,39 @@ export const searchTasks = async (
 		);
 	}
 	if (filter.awaiting_triage) where.push(awaitingTriage(db));
+	if (filter.cursor) {
+		const { project_id, order_key } = filter.cursor;
+		where.push(
+			or(
+				gt(tasks.projectId, project_id),
+				and(eq(tasks.projectId, project_id), gt(tasks.orderKey, order_key)),
+			),
+		);
+	}
 	const rows = await db
 		.select()
 		.from(tasks)
 		.where(and(...where))
 		.orderBy(asc(tasks.projectId), asc(tasks.orderKey))
-		.limit(filter.limit);
+		.limit(filter.limit + 1);
+	// 続きの有無だけを見る 1 行にはラベルを引かず、bind の上限に収める
+	const page = rows.slice(0, filter.limit);
+	const last = page.at(-1);
+	const next_cursor =
+		rows.length > filter.limit && last
+			? btoa(JSON.stringify([1, last.projectId, last.orderKey]))
+					.replace(/\+/g, "-")
+					.replace(/\//g, "_")
+					.replace(/=+$/, "")
+			: null;
 	const names = await labelsOf(
 		db,
-		rows.map((r) => r.id),
+		page.map((r) => r.id),
 	);
-	return rows.map((r) => toTask(r, names.get(r.id) ?? []));
+	return {
+		tasks: page.map((r) => toTask(r, names.get(r.id) ?? [])),
+		next_cursor,
+	};
 };
 
 const actorIsActive = async (db: Db, id: string) =>

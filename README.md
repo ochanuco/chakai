@@ -60,7 +60,7 @@ actor の ID は名簿の名前（`owner`、`yukarin` など）で、それ以�
 | `GET /v1/projects`             | プロジェクトと repo、参考リンク（`links`）の一覧                                                                                                                        |
 | `POST /v1/projects`            | プロジェクトを作る（`name`、`description`）                                                                                                                             |
 | `POST /v1/projects/:id/repos`  | repo を紐付ける（`repo` は `owner/name`）                                                                                                                               |
-| `GET /v1/tasks`                | タスクを探す（`project_id`、`q`、`state`（カンマ区切り）、`assignee_id`、`parent_id`、`label`、`awaiting_triage`、`limit`）                                             |
+| `GET /v1/tasks`                | タスクを探す（`project_id`、`q`、`state`（カンマ区切り）、`assignee_id`、`parent_id`、`label`、`awaiting_triage`、`limit`、`cursor`）                                   |
 | `POST /v1/tasks`               | 起票する（`project_id`、`title`、`body`、`parent_id`、`state`、`assignee_id`、`labels`、`discovered_from`）                                                             |
 | `GET /v1/tasks/:id`            | タスクを、関係（`relations`）とリンク（`links`。成果物の PR は `github` に取り込んだ状態を持つ）と一緒に読む                                                            |
 | `PATCH /v1/tasks/:id`          | 更新する（`title`、`body`、`state`、`waiting_on`、`assignee_id`、`labels`、`order`）                                                                                    |
@@ -83,6 +83,10 @@ actor の ID は名簿の名前（`owner`、`yukarin` など）で、それ以�
 | `GET /health`                  | 疎通確認                                                                                                                                                                |
 
 書き込み（`POST`・`PATCH`・`PUT`・`DELETE`）は、`Content-Type` が `application/json` のものだけを受ける（それ以外は 415）。Access のログインで来た書き込みは、`Origin` がこのホストと同じものだけを通す（無いか違えば 403）。service token の書き込みには `Origin` を求めない。
+
+検索は `{ "tasks": [...], "next_cursor": "..." }` を返す。`limit` は既定 50、最大 90。`next_cursor` が `null` なら終端で、それ以外なら同じ検索条件と `cursor=<next_cursor>`（URL エンコードする）で続きを読む。MCP の `search_tasks` も同じ引数・返り値を使う。カーソルは不透明な値として扱い、内容を組み立てない。壊れた値・未知の版は 400 になる。
+
+並びはプロジェクト ID、次に `order_key` のバイト順。カーソルは最後に返した行の位置を保持するので、既読の範囲への挿入で既存の結果がずれず、境界の後ろへの挿入は次のページに含まれる。検索全体のスナップショットではなく、既読の範囲に増えた行は再検索で読める。読み取り中に既存タスクの並びや状態を変えた場合、ページ間で重複・未取得になることはある。
 
 ## MCP
 

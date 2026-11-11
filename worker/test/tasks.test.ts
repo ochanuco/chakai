@@ -545,3 +545,122 @@ describe("探す", () => {
 		expect(res.status).toBe(400);
 	});
 });
+
+type TaskPage = { tasks: TaskJson[]; next_cursor: string | null };
+const taskPage = async (params: Record<string, string>) => {
+	const res = await call(
+		owner,
+		"GET",
+		`/v1/tasks?${new URLSearchParams(params)}`,
+	);
+	expect(res.status).toBe(200);
+	return res.json<TaskPage>();
+};
+
+describe("検索の続きを読む", () => {
+	it("90 件を超える結果を、絞り込みとラベルを保って最後まで読める", async () => {
+		const project = await newProject();
+		const expected: string[] = [];
+		for (let i = 0; i < 92; i++) {
+			expected.push(
+				(
+					await newTask(project.id, {
+						title: `ページ ${i}`,
+						state: "todo",
+						assignee_id: "akarin",
+						labels: ["ページ"],
+					})
+				).id,
+			);
+		}
+		await newTask(project.id, { title: "対象外", state: "backlog" });
+		const params = {
+			project_id: project.id,
+			state: "todo",
+			assignee_id: "akarin",
+			label: "ページ",
+			q: "ページ",
+			limit: "90",
+		};
+		const first = await taskPage(params);
+		expect(first.tasks.map((t) => t.id)).toEqual(expected.slice(0, 90));
+		expect(first.next_cursor).toEqual(expect.any(String));
+		const last = await taskPage({ ...params, cursor: first.next_cursor ?? "" });
+		expect(last.tasks.map((t) => t.id)).toEqual(expected.slice(90));
+		expect(last.tasks.every((t) => t.labels.includes("ページ"))).toBe(true);
+		expect(last.next_cursor).toBeNull();
+	});
+
+	it("前のページに挿入されても既存の結果を重複せず、境界の後ろの挿入を読める", async () => {
+		const project = await newProject();
+		const a = await newTask(project.id);
+		const b = await newTask(project.id);
+		const c = await newTask(project.id);
+		const params = { project_id: project.id, limit: "2" };
+		const first = await taskPage(params);
+		expect(first.tasks.map((t) => t.id)).toEqual([a.id, b.id]);
+		const before = await newTask(project.id);
+		await patch(before.id, { order: { before: a.id } });
+		const after = await newTask(project.id);
+		await patch(after.id, { order: { after: b.id } });
+		// 境界の行が並べ替わっても、その現在位置を引き直さない
+		await patch(b.id, { order: { before: a.id } });
+		const last = await taskPage({ ...params, cursor: first.next_cursor ?? "" });
+		expect(last.tasks.map((t) => t.id)).toEqual([after.id, c.id]);
+		expect(last.next_cursor).toBeNull();
+	});
+
+	it("プロジェクトをまたぐ境界でも order_key の重なりで飛ばさない", async () => {
+		const a = await newProject();
+		const b = await newProject();
+		const word = crypto.randomUUID();
+		const first = await newTask(a.id, { title: word });
+		const second = await newTask(b.id, { title: word });
+		expect(first.order_key).toBe(second.order_key);
+		const page = await taskPage({ q: word, limit: "1" });
+		expect(page.tasks.map((t) => t.id)).toEqual([first.id]);
+		const last = await taskPage({
+			q: word,
+			limit: "1",
+			cursor: page.next_cursor ?? "",
+		});
+		expect(last.tasks.map((t) => t.id)).toEqual([second.id]);
+		expect(last.next_cursor).toBeNull();
+	});
+
+	it("空の結果と limit 件ちょうどの結果には続きが無い", async () => {
+		const project = await newProject();
+		expect(await taskPage({ project_id: project.id })).toEqual({
+			tasks: [],
+			next_cursor: null,
+		});
+		await newTask(project.id);
+		expect(
+			(await taskPage({ project_id: project.id, limit: "1" })).next_cursor,
+		).toBeNull();
+	});
+
+	it("壊れたカーソルと未知の版を 400 で拒む", async () => {
+		const encode = (value: unknown) =>
+			btoa(JSON.stringify(value)).replace(/=+$/, "");
+		for (const cursor of [
+			"",
+			"!",
+			"a".repeat(4097),
+			"bm90IGpzb24",
+			encode(null),
+			encode([2, "p", "a0"]),
+			encode([1, "p"]),
+			encode([1, "p", 0]),
+			encode([1, "p", "a0", "extra"]),
+		]) {
+			const res = await call(
+				owner,
+				"GET",
+				`/v1/tasks?${new URLSearchParams({ cursor })}`,
+			);
+			expect(res.status).toBe(400);
+			expect(await res.json()).toMatchObject({ error: "invalid_input" });
+		}
+	});
+});

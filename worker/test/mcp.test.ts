@@ -408,3 +408,24 @@ describe("道具", () => {
 		expect(ended.structuredContent.ended_at).not.toBeNull();
 	});
 });
+
+it("search_tasks は REST と同じカーソルで続きを読める", async () => {
+	const project = await newProject();
+	const a = await newTask(project.id);
+	const b = await newTask(project.id);
+	type Page = { tasks: TaskJson[]; next_cursor: string | null };
+	const first = await tool<Page>("search_tasks", {
+		project_id: project.id,
+		limit: 1,
+	});
+	expect(first.structuredContent.tasks.map((t) => t.id)).toEqual([a.id]);
+	const last = await tool<Page>("search_tasks", {
+		project_id: project.id,
+		limit: 1,
+		cursor: first.structuredContent.next_cursor,
+	});
+	expect(last.structuredContent.tasks.map((t) => t.id)).toEqual([b.id]);
+	expect(last.structuredContent.next_cursor).toBeNull();
+	const invalid = await tool("search_tasks", { cursor: "broken" });
+	expect(invalid.isError).toBe(true);
+});

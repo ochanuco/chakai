@@ -104,7 +104,27 @@ const TaskPatch = v.strictObject({
 	),
 });
 
+const TaskCursor = v.pipe(
+	v.string(),
+	v.maxLength(4096),
+	v.regex(/^[A-Za-z0-9_-]+$/),
+	v.transform((value): unknown => {
+		try {
+			return JSON.parse(atob(value.replace(/-/g, "+").replace(/_/g, "/")));
+		} catch {
+			return null;
+		}
+	}),
+	v.strictTuple([
+		v.literal(1),
+		Id,
+		v.pipe(v.string(), v.minLength(1), v.maxLength(2048)),
+	]),
+	v.transform(([, project_id, order_key]) => ({ project_id, order_key })),
+);
+
 const TaskQuery = v.strictObject({
+	cursor: v.optional(TaskCursor),
 	project_id: v.optional(Id),
 	q: v.optional(Text(200)),
 	state: v.optional(
@@ -219,7 +239,7 @@ export const handleRest = async (
 		case "GET tasks": {
 			const query = parse(TaskQuery, Object.fromEntries(url.searchParams));
 			if (!query.ok) return failure(query.error);
-			return Response.json({ tasks: await searchTasks(db, query.value) });
+			return Response.json(await searchTasks(db, query.value));
 		}
 		case "POST tasks": {
 			const input = await body(request, TaskInput);
