@@ -287,7 +287,7 @@ type PullPage = {
 type ScanRepoNode = { open?: PullPage; recent?: PullPage } | null;
 
 const SCAN_PAGE = `pageInfo { hasNextPage endCursor } nodes { number body updatedAt }`;
-// 1 つの repo で辿るページの上限。超えた分は次の同期が見る
+// 1 つの repo で辿るページの上限。超えた分は読まず、読めたところまでを返す
 const MAX_SCAN_ROUNDS = 5;
 
 type ScanCursor = {
@@ -300,9 +300,9 @@ type ScanCursor = {
 };
 
 export type ScanResult = {
-	/** 見終えた repo と、その開いている PR・since の後に更新された PR */
+	/** 読めた repo と、その開いている PR・since の後に更新された PR */
 	scanned: Map<string, ScannedPull[]>;
-	/** 読めなかった repo と、上限までに見終えなかった repo */
+	/** 見終えなかった repo。読めなかったものと、ページの上限に届いたもの */
 	failed: string[];
 };
 
@@ -316,6 +316,7 @@ export const scanRepos = async (
 ): Promise<ScanResult> => {
 	const found = new Map<string, Map<number, ScannedPull>>();
 	const failed = new Set<string>();
+	const unreadable = new Set<string>();
 	let pending: ScanCursor[] = repos.map((r) => ({
 		...r,
 		open: true,
@@ -362,6 +363,7 @@ recent: pullRequests(first: 50, after: $ra${i}, orderBy: {field: UPDATED_AT, dir
 				const pulls = found.get(c.repo);
 				if (!node || !pulls) {
 					failed.add(c.repo);
+					unreadable.add(c.repo);
 					return;
 				}
 				for (const p of node.open?.nodes ?? []) {
@@ -392,7 +394,7 @@ recent: pullRequests(first: 50, after: $ra${i}, orderBy: {field: UPDATED_AT, dir
 	}
 	const scanned = new Map<string, ScannedPull[]>();
 	for (const [repo, pulls] of found) {
-		if (!failed.has(repo)) scanned.set(repo, [...pulls.values()]);
+		if (!unreadable.has(repo)) scanned.set(repo, [...pulls.values()]);
 	}
 	return { scanned, failed: [...failed] };
 };

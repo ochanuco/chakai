@@ -153,7 +153,8 @@ const linkMarked = async (
 		}
 	}
 
-	for (const repos of chunked([...scanned.keys()])) {
+	const finished = [...scanned.keys()].filter((r) => !failed.includes(r));
+	for (const repos of chunked(finished)) {
 		await db
 			.update(projectRepos)
 			.set({ scannedAt: startedAt })

@@ -457,6 +457,8 @@ describe("同期", () => {
 		} as unknown as ExecutionContext);
 		await Promise.all(pending);
 		expect((await read(task.id)).state).toBe("done");
+		const page = await (await call(owner, "GET", `/tasks/${task.id}`)).text();
+		expect(page).toContain("同期・Cron・");
 		expect((await eventsOf(task.id)).at(-1)).toMatchObject({
 			field: "state",
 			actor_id: "sync",

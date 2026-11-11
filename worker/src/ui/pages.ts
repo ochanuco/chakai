@@ -3,6 +3,7 @@ import type { TaskEvent } from "../history.ts";
 import type { Link } from "../links.ts";
 import type { Actor, Label } from "../roster.ts";
 import type { SettingSource, Settings } from "../settings.ts";
+import { SYNC_ACTOR_ID } from "../sync.ts";
 import type {
 	ProjectRow,
 	ProjectView,
@@ -601,7 +602,7 @@ ${
 			.reverse()
 			.map(
 				(e) =>
-					html`<li><div>${change(e, names)}</div><div class="when">${nameOf(names, e.actor_id)}・${e.caller_id === null ? "ブラウザ" : (e.caller_name ?? "不明な呼び出し元")}・${when(e.at, now)}</div></li>`,
+					html`<li><div>${change(e, names)}</div><div class="when">${nameOf(names, e.actor_id)}・${e.caller_id === null ? (e.actor_id === SYNC_ACTOR_ID ? "Cron" : "ブラウザ") : (e.caller_name ?? "不明な呼び出し元")}・${when(e.at, now)}</div></li>`,
 			)}</ol>`,
 		nav,
 	);
