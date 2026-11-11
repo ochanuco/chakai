@@ -175,7 +175,7 @@ export const TOOLS: {
 		name: "search_tasks",
 		title: "タスクを探す",
 		description:
-			"条件に合うタスクを、プロジェクト内の並び（order_key）の順に返す。q は件名と本文に含む語。",
+			"条件に合うタスクを、プロジェクト ID・order_key の順に返す。q は件名と本文に含む語。next_cursor が null でなければ、同じ検索条件と cursor にその値を渡して続きを読める。",
 		inputSchema: {
 			type: "object",
 			properties: {
@@ -195,6 +195,12 @@ export const TOOLS: {
 					type: "boolean",
 					description:
 						"true なら仕分け待ち（AI が起票し、owner がまだ扱いを決めていない backlog）だけ",
+				},
+				cursor: {
+					type: "string",
+					minLength: 1,
+					maxLength: 4096,
+					description: "前の検索結果の next_cursor。検索条件は変えずに渡す",
 				},
 				limit: {
 					type: "integer",
