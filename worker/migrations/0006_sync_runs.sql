@@ -14,4 +14,5 @@ CREATE TABLE `sync_runs` (
 );
 --> statement-breakpoint
 ALTER TABLE `github_links` ADD `actor_label` text;--> statement-breakpoint
-ALTER TABLE `github_links` ADD `labeled_at` text;
+ALTER TABLE `github_links` ADD `labeled_at` text;--> statement-breakpoint
+ALTER TABLE `links` ADD `source` text DEFAULT 'explicit' NOT NULL;

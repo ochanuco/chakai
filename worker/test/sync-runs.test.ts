@@ -274,8 +274,13 @@ describe("ラベルの付け直し", () => {
 		)
 			.bind(repo)
 			.run();
+		await env.DB.prepare(
+			"UPDATE links SET source = 'explicit' WHERE url LIKE ?",
+		)
+			.bind(`https://github.com/${repo}/%`)
+			.run();
 		const backfill = env.TEST_MIGRATIONS.find((m) =>
-			m.name.includes("actor_label_backfill"),
+			m.name.includes("link_backfill"),
 		);
 		for (const query of backfill?.queries ?? [])
 			await env.DB.prepare(query).run();
@@ -284,11 +289,44 @@ describe("ラベルの付け直し", () => {
 		)
 			.bind(repo)
 			.all<{ number: number; owner_id: string; actor_label: string | null }>();
+		const marked = await env.DB.prepare(
+			"SELECT count(*) AS n FROM links WHERE url LIKE ? AND source = 'marker'",
+		)
+			.bind(`https://github.com/${repo}/%`)
+			.first<{ n: number }>();
+		expect(marked?.n).toBe(2);
 		expect(rows.results).toEqual([
 			{ number: 1, owner_id: unassigned.id, actor_label: null },
 			{ number: 1, owner_id: assigned.id, actor_label: "actor:akarin" },
 			{ number: 2, owner_id: unassigned.id, actor_label: "actor:yukarin" },
 			{ number: 3, owner_id: unassigned.id, actor_label: null },
 		]);
+	});
+
+	it("手で呼んだ同期が印から付けたリンクも、印から付けたと残し、担当のラベルを付ける", async () => {
+		const repo = "example/labels-4";
+		const project = await setup(repo);
+		gh.repos.get(repo)?.labels.add("actor:yukarin");
+		const task = await newTask(project.id, { assignee_id: "yukarin" });
+		gh.pull(repo, 1, { body: `chakai:${task.id}` });
+		gh.pull(repo, 2);
+		await call(mac, "POST", "/v1/sync");
+		await call(mac, "POST", `/v1/tasks/${task.id}/links`, {
+			url: `https://github.com/${repo}/pull/2`,
+			role: "deliverable",
+		});
+		const { links } = await (
+			await call(mac, "GET", `/v1/tasks/${task.id}`)
+		).json<{ links: { linked_by: string; source: string }[] }>();
+		expect(links).toMatchObject([
+			{ linked_by: "owner", source: "marker" },
+			{ linked_by: "owner", source: "explicit" },
+		]);
+		expect(await labelState(repo)).toMatchObject([
+			{ number: 1, actor_label: "actor:yukarin" },
+			{ number: 2, actor_label: null },
+		]);
+		expect(gh.repos.get(repo)?.pulls.get(1)?.labels).toEqual(["actor:yukarin"]);
+		expect(await page(`/tasks/${task.id}`)).toContain("印から");
 	});
 });

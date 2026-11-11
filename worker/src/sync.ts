@@ -172,6 +172,7 @@ const linkMarked = async (
 			pull,
 			{ title: "", note: "" },
 			{ name: label, applied: !skipped },
+			"marker",
 		);
 		labelTried.add(link.id);
 		try {

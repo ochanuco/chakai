@@ -199,6 +199,9 @@ export const LINK_KINDS = [
 	"url",
 ] as const;
 export type LinkKind = (typeof LINK_KINDS)[number];
+// marker は、同期が PR の本文の印から付けたリンク。誰が同期を呼んだかは linked_by に残る
+export const LINK_SOURCES = ["explicit", "marker"] as const;
+export type LinkSource = (typeof LINK_SOURCES)[number];
 
 // owner_id はタスクかプロジェクトの ID。どちらを指すかは owner_type で決まるので、外部キーにしない
 export const links = sqliteTable(
@@ -215,6 +218,9 @@ export const links = sqliteTable(
 		linkedBy: text("linked_by")
 			.notNull()
 			.references(() => actors.id),
+		source: text("source", { enum: LINK_SOURCES })
+			.notNull()
+			.default("explicit"),
 		createdAt: text("created_at").notNull(),
 	},
 	(t) => [uniqueIndex("links_owner_url").on(t.ownerType, t.ownerId, t.url)],

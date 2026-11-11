@@ -210,7 +210,7 @@ const deliverableRow = (link: Link, now: Date) => {
 					: pill(g.draft ? "open（draft）" : "open", "wait");
 	const [review, reviewTone] = REVIEW_PILLS[g.review ?? ""] ?? ["", ""];
 	const [checks, checksTone] = CHECKS_PILLS[g.checks ?? ""] ?? ["CI 不明", ""];
-	return html`<div class="row">${state}${linkTitle(link)}<span class="who">${g.repo}#${g.number}${g.base_branch ? html` → ${g.base_branch}` : ""}</span>${review ? pill(review, reviewTone) : ""}${g.state === null ? "" : pill(checks, checksTone)}<span class="who">${g.synced_at ? html`同期 ${when(g.synced_at, now)}` : "まだ同期していない"}</span></div>`;
+	return html`<div class="row">${state}${linkTitle(link)}<span class="who">${g.repo}#${g.number}${g.base_branch ? html` → ${g.base_branch}` : ""}${link.source === "marker" ? "・印から" : ""}</span>${review ? pill(review, reviewTone) : ""}${g.state === null ? "" : pill(checks, checksTone)}<span class="who">${g.synced_at ? html`同期 ${when(g.synced_at, now)}` : "まだ同期していない"}</span></div>`;
 };
 
 const referenceRow = (link: Link) =>

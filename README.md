@@ -45,7 +45,7 @@ actor の ID は名簿の名前（`owner`、`yukarin` など）で、それ以�
 - 成果物の PR は、状態（`open`・`closed`・`merged`）、draft か、base ブランチ、merge 先がその repo のデフォルトブランチか、レビュー状況、CI の結果を `github_links` に取り込む。取り込みは上書きで、`events` には残さない。
 - PR の付け方は 2 通り。明示的に付けるか、PR の本文に `chakai:<タスクの ID>` と書いて同期に拾わせる。印を拾うのは、タスクのプロジェクトに紐付いた repo の PR だけで、開いている PR と、前回その repo を見た後に更新された PR を見る。fork からの PR と、repo の owner でも token のアカウントでもない人が作った PR の印は無視する。印は、前後に英数字やハイフンが続かない `chakai:<ID>` だけを読む。
 - プロジェクトに紐付いていない repo の PR を明示的に付けると、その repo をプロジェクトに足す。
-- 成果物の PR を付けたとき、GitHub の PR に `actor:<actor の ID>` ラベルを付ける。明示的に付けたときは付けた actor、印から付けたときはタスクの担当で、agent のときだけ付ける。ラベルが repo に定義されていなければ、作らずにリンクだけ付け、警告を返す。付けるべきラベルは `github_links` に持ち、付いていない間は同期のたびに付け直す（merge 済みの PR も含め、1 回の同期で 30 本まで）。
+- 成果物の PR を付けたとき、GitHub の PR に `actor:<actor の ID>` ラベルを付ける。明示的に付けたときは付けた actor、印から付けたときはタスクの担当で、agent のときだけ付ける。ラベルが repo に定義されていなければ、作らずにリンクだけ付け、警告を返す。どちらで付けたかは、リンクの `source`（`explicit` か `marker`）に残る。印から付けたリンクは、同期を誰が呼んだかによらず、担当のラベルを付ける。付けるべきラベルは `github_links` に持ち、付いていない間は同期のたびに付け直す（merge 済みの PR も含め、1 回の同期で 30 本まで）。
 - 同期は 1 時間ごとの Cron Trigger と、手動の `POST /v1/sync` で動く。成果物の PR から merge せずに閉じたものを除き、残りがすべてデフォルトブランチに merge されていて、少なくとも 1 つあるとき、タスクを `done` にする。当てるのは、子を持たない `todo`・`doing`・`review` のタスク。手で戻しても、条件を満たしている間は次の同期がまた `done` にする。
 - Cron の同期が動かした書き込み（自動の `done`、印から付けたリンク）は、名簿の `sync`（kind `system`、無効）の操作として `events` に残る。手動の同期では、呼んだ actor と呼び出し元で残る。
 - CI の結果は、PR の head の commit の `statusCheckRollup` から読み、読めなければ Actions の workflow run と commit status から決める。どちらも読めない repo では、結果を不明（`null`）として持つ。workflow run と commit status から読むのは 1 回の同期で 20 本まで（同時に 4 本まで）で、超えた PR も不明として持つ。読み始める PR は 1 時間ごとにずらす。
