@@ -1,6 +1,7 @@
 import { listTaskEvents } from "../history.ts";
 import type { RestContext } from "../rest.ts";
 import { isOwnerLogin, listActors, listLabels } from "../roster.ts";
+import { listSyncRuns } from "../sync.ts";
 import { CLIENT_JS } from "./client.ts";
 import {
 	countTriage,
@@ -19,6 +20,7 @@ import {
 	renderNotFound,
 	renderProject,
 	renderSettings,
+	renderSync,
 	renderTask,
 	renderTriage,
 } from "./pages.ts";
@@ -62,7 +64,11 @@ export const handleUi = async (
 			},
 		});
 	}
-	const nav = { triage: await countTriage(db) };
+	const runs = await listSyncRuns(db);
+	const nav = {
+		triage: await countTriage(db),
+		syncWarnings: runs[0]?.warnings.length ?? 0,
+	};
 	if (request.method !== "GET" || rest.length > 0) {
 		return page(renderNotFound(nav), 404);
 	}
@@ -92,9 +98,12 @@ export const handleUi = async (
 		return page(
 			renderTriage(
 				{ rows, projects, names: actorNames(actors), now },
-				{ triage: rows.length },
+				{ ...nav, triage: rows.length },
 			),
 		);
+	}
+	if (section === "sync" && !id) {
+		return page(renderSync(runs, actorNames(await listActors(db)), now, nav));
 	}
 	if (section === "settings" && !id) {
 		return page(renderSettings(await loadSettings(db), nav));

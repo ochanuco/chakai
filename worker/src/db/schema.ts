@@ -249,6 +249,10 @@ export const githubLinks = sqliteTable(
 		review: text("review", { enum: PULL_REVIEWS }),
 		checks: text("checks", { enum: PULL_CHECKS }),
 		syncedAt: text("synced_at"),
+		// 付けるべき actor のラベル（付けないリンクは null）と、付いていると確かめた時刻。
+		// 時刻が空の間は、同期のたびに付け直す
+		actorLabel: text("actor_label"),
+		labeledAt: text("labeled_at"),
 	},
 	(t) => [index("github_links_pull").on(t.repo, t.number)],
 );
@@ -284,3 +288,23 @@ export const events = sqliteTable(
 	},
 	(t) => [index("events_entity").on(t.entity, t.entityId, t.id)],
 );
+
+export const SYNC_TRIGGERS = ["cron", "manual"] as const;
+export type SyncTrigger = (typeof SYNC_TRIGGERS)[number];
+
+// 同期 1 回ごとの結果。失敗に気付けるよう画面に出すためのもので、古い行は消す
+export const syncRuns = sqliteTable("sync_runs", {
+	id: text("id").primaryKey(),
+	at: text("at").notNull(),
+	trigger: text("trigger", { enum: SYNC_TRIGGERS }).notNull(),
+	actorId: text("actor_id")
+		.notNull()
+		.references(() => actors.id),
+	callerId: text("caller_id").references(() => callers.id),
+	skipped: integer("skipped", { mode: "boolean" }).notNull(),
+	synced: integer("synced").notNull(),
+	linked: integer("linked").notNull(),
+	done: integer("done").notNull(),
+	// JSON の文字列の配列
+	warnings: text("warnings").notNull(),
+});

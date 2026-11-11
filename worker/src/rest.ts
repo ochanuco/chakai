@@ -11,7 +11,7 @@ import { type Failure, fail, type Result } from "./result.ts";
 import { listActors, listLabels } from "./roster.ts";
 import { endRun, listRuns, startRun } from "./runs.ts";
 import { getSettings, putSetting, SETTING_KEYS } from "./settings.ts";
-import { runSync } from "./sync.ts";
+import { listSyncRuns, syncAndRecord } from "./sync.ts";
 import {
 	createTask,
 	getTask,
@@ -212,8 +212,10 @@ export const handleRest = async (
 		}
 		case "DELETE links/:id":
 			return respond(await removeLink(db, who, id));
+		case "GET sync-runs":
+			return Response.json({ runs: await listSyncRuns(db) });
 		case "POST sync":
-			return Response.json(await runSync(db, github, who));
+			return Response.json(await syncAndRecord(db, github, who));
 		case "GET tasks": {
 			const query = parse(TaskQuery, Object.fromEntries(url.searchParams));
 			if (!query.ok) return failure(query.error);

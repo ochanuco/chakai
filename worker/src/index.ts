@@ -5,7 +5,7 @@ import type { GitHub } from "./github.ts";
 import { checkWrite } from "./guard.ts";
 import { handleMcp } from "./mcp.ts";
 import { handleRest } from "./rest.ts";
-import { runSync } from "./sync.ts";
+import { syncAndRecord } from "./sync.ts";
 import { handleUi } from "./ui/index.ts";
 
 type Options = { keys?: JWTVerifyGetKey; fetch?: typeof fetch };
@@ -62,7 +62,7 @@ export const createApp = (options: Options = {}) => ({
 		ctx: ExecutionContext,
 	): Promise<void> {
 		ctx.waitUntil(
-			runSync(openDb(env.DB), githubOf(env, options), null)
+			syncAndRecord(openDb(env.DB), githubOf(env, options), null)
 				.then((result) => {
 					const log = result.warnings.length > 0 ? console.warn : console.log;
 					log(JSON.stringify({ message: "sync", ...result }));

@@ -1,7 +1,24 @@
-import { and, eq, inArray, isNull, ne, or } from "drizzle-orm";
+import {
+	and,
+	desc,
+	eq,
+	inArray,
+	isNotNull,
+	isNull,
+	ne,
+	notInArray,
+	or,
+} from "drizzle-orm";
 import type { Principal } from "./auth.ts";
 import type { Db } from "./db/client.ts";
-import { githubLinks, links, projectRepos, tasks } from "./db/schema.ts";
+import {
+	githubLinks,
+	links,
+	projectRepos,
+	type SyncTrigger,
+	syncRuns,
+	tasks,
+} from "./db/schema.ts";
 import { isConflict, writeAll } from "./db/write.ts";
 import {
 	CHECKS_FALLBACK_PER_SYNC,
@@ -15,6 +32,7 @@ import {
 	scanRepos,
 } from "./github.ts";
 import { chunked } from "./history.ts";
+import { newId } from "./id.ts";
 import {
 	actorLabelOf,
 	applyActorLabel,
@@ -58,6 +76,7 @@ const linkMarked = async (
 	who: Principal,
 	result: SyncResult,
 	budget: ChecksBudget,
+	labelTried: Set<string>,
 ) => {
 	const startedAt = new Date().toISOString();
 	const rows = await db.select().from(projectRepos);
@@ -142,6 +161,8 @@ const linkMarked = async (
 		const pull = pulls[i];
 		if (!pull) continue;
 		const at = new Date().toISOString();
+		const skipped = label ? await applyActorLabel(gh, pull, label) : null;
+		if (skipped) result.warnings.push(skipped);
 		const { link, statements } = await deliverableWrites(
 			db,
 			who,
@@ -150,7 +171,9 @@ const linkMarked = async (
 			ref,
 			pull,
 			{ title: "", note: "" },
+			{ name: label, applied: !skipped },
 		);
+		labelTried.add(link.id);
 		try {
 			await writeAll(db, statements);
 		} catch (e) {
@@ -159,10 +182,6 @@ const linkMarked = async (
 			continue;
 		}
 		result.linked.push({ task_id: task.id, url: link.url });
-		if (label) {
-			const skipped = await applyActorLabel(gh, pull, label);
-			if (skipped) result.warnings.push(skipped);
-		}
 	}
 
 	const finished = [...scanned.keys()].filter((r) => !failed.includes(r));
@@ -223,6 +242,74 @@ const refreshPulls = async (
 	result.synced = updates.length;
 };
 
+// 1 回の同期で付け直すラベルの数。定義の無いラベルは毎回失敗するので、上限を置いて呼び出しを増やさない
+const LABEL_RETRIES_PER_SYNC = 30;
+
+/**
+ * 付けるべき actor のラベルがまだ付いていない成果物の PR に、付け直す。
+ * token の権限やラベルの定義が後から直ったときに、merge 済みの PR にも追い付くため
+ */
+const retryLabels = async (
+	db: Db,
+	gh: GitHub,
+	_who: Principal,
+	result: SyncResult,
+	_budget: ChecksBudget,
+	labelTried: Set<string>,
+) => {
+	const waiting = await db
+		.select({
+			linkId: githubLinks.linkId,
+			repo: githubLinks.repo,
+			number: githubLinks.number,
+			label: githubLinks.actorLabel,
+		})
+		.from(githubLinks)
+		.where(
+			and(
+				isNotNull(githubLinks.actorLabel),
+				isNull(githubLinks.labeledAt),
+				labelTried.size > 0
+					? notInArray(githubLinks.linkId, [...labelTried].slice(0, 90))
+					: undefined,
+			),
+		)
+		.orderBy(githubLinks.linkId);
+	// 付けられない PR が先頭に溜まっても後ろの PR に回るよう、始める位置を 1 時間ごとにずらす
+	const start =
+		waiting.length &&
+		(Math.floor(Date.now() / 3_600_000) * LABEL_RETRIES_PER_SYNC) %
+			waiting.length;
+	const rows = [...waiting.slice(start), ...waiting.slice(0, start)]
+		.slice(0, LABEL_RETRIES_PER_SYNC)
+		.flatMap((r) => (r.label ? [{ ...r, label: r.label }] : []));
+	// CI の結果はここでは要らないので、REST での読み直しはしない
+	const pulls = await fetchPulls(gh, rows, { remaining: 0 });
+	const at = new Date().toISOString();
+	const labeled: string[] = [];
+	const skips = new Set<string>();
+	for (const [i, row] of rows.entries()) {
+		const pull = pulls[i];
+		const skipped = pull
+			? await applyActorLabel(gh, pull, row.label)
+			: `${pullKey(row)} を読めないので、ラベル ${row.label} を付けていない`;
+		if (skipped) skips.add(skipped);
+		else labeled.push(row.linkId);
+	}
+	result.warnings.push(...skips);
+	for (const ids of chunked(labeled)) {
+		await db
+			.update(githubLinks)
+			.set({ labeledAt: at })
+			.where(inArray(githubLinks.linkId, ids));
+	}
+	if (waiting.length > rows.length) {
+		result.warnings.push(
+			`ラベルを付けていない PR が ${waiting.length} 本ある。1 回の同期で付け直すのは ${LABEL_RETRIES_PER_SYNC} 本まで`,
+		);
+	}
+};
+
 /**
  * GitHub との同期。印からリンクを付け、成果物の PR の状態を取り込み、条件を満たしたタスクを done にする。
  * GitHub を読めなかった段は警告にして先へ進む（取り込み済みの状態で done の規則を当てる）。
@@ -245,9 +332,10 @@ export const runSync = async (
 	}
 	const who = caller ?? { actorId: SYNC_ACTOR_ID, callerId: null };
 	const budget = { remaining: CHECKS_FALLBACK_PER_SYNC };
-	for (const step of [linkMarked, refreshPulls]) {
+	const labelTried = new Set<string>();
+	for (const step of [linkMarked, refreshPulls, retryLabels]) {
 		try {
-			await step(db, github, who, result, budget);
+			await step(db, github, who, result, budget, labelTried);
 		} catch (e) {
 			if (!(e instanceof GitHubError)) throw e;
 			result.warnings.push(e.message);
@@ -256,3 +344,94 @@ export const runSync = async (
 	result.done = await completeDelivered(db, who);
 	return result;
 };
+
+export type SyncRun = {
+	id: string;
+	at: string;
+	trigger: SyncTrigger;
+	actor_id: string;
+	caller_id: string | null;
+	skipped: boolean;
+	synced: number;
+	linked: number;
+	done: number;
+	warnings: string[];
+};
+
+export const SYNC_RUNS_KEPT = 50;
+
+/** 同期の結果を残す。新しい方から SYNC_RUNS_KEPT 件より古い行は消す */
+const recordSync = async (
+	db: Db,
+	at: string,
+	caller: Principal | null,
+	result: SyncResult,
+) => {
+	const kept = db
+		.select({ id: syncRuns.id })
+		.from(syncRuns)
+		.orderBy(desc(syncRuns.id))
+		.limit(SYNC_RUNS_KEPT);
+	await writeAll(db, [
+		db.insert(syncRuns).values({
+			id: newId(),
+			at,
+			trigger: caller ? "manual" : "cron",
+			actorId: caller?.actorId ?? SYNC_ACTOR_ID,
+			callerId: caller?.callerId ?? null,
+			skipped: result.skipped,
+			synced: result.synced,
+			linked: result.linked.length,
+			done: result.done.length,
+			warnings: JSON.stringify(result.warnings),
+		}),
+		db.delete(syncRuns).where(notInArray(syncRuns.id, kept)),
+	]);
+};
+
+/**
+ * 同期して、結果を残す。例外で終わった同期も、理由を warnings に入れて残してから投げ直す
+ * （Worker のログを見なくても、画面で失敗に気付けるようにするため）
+ */
+export const syncAndRecord = async (
+	db: Db,
+	github: GitHub | null,
+	caller: Principal | null,
+): Promise<SyncResult> => {
+	const at = new Date().toISOString();
+	try {
+		const result = await runSync(db, github, caller);
+		await recordSync(db, at, caller, result);
+		return result;
+	} catch (e) {
+		await recordSync(db, at, caller, {
+			skipped: false,
+			synced: 0,
+			linked: [],
+			done: [],
+			warnings: [`同期が例外で終わった: ${e instanceof Error ? e.message : e}`],
+		}).catch(() => {});
+		throw e;
+	}
+};
+
+/** 同期の結果を、新しい順に返す */
+export const listSyncRuns = async (db: Db): Promise<SyncRun[]> =>
+	(
+		await db
+			.select()
+			.from(syncRuns)
+			.orderBy(desc(syncRuns.id))
+			.limit(SYNC_RUNS_KEPT)
+	).map((r) => ({
+		id: r.id,
+		at: r.at,
+		trigger: r.trigger,
+		actor_id: r.actorId,
+		caller_id: r.callerId,
+		skipped: r.skipped,
+		synced: r.synced,
+		linked: r.linked,
+		done: r.done,
+		warnings: JSON.parse(r.warnings) as string[],
+	}));
