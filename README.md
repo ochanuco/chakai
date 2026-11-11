@@ -161,6 +161,6 @@ pnpm run roster:add-caller --remote
 
 認証情報は Environment `production` の secret `OP_SA_DEPLOY` から 1Password の `gh-deploy/cloudflare-workers` を読む（`.github/deploy/production.env.op`）。
 
-GitHub の token は、chakai 専用の fine-grained PAT（Pull requests が Read and write、Commit statuses と Actions が Read-only）を 1Password の `gh-deploy/chakai-worker` の `github_token` に置く。デプロイのたびに Worker の secret `GITHUB_TOKEN` に反映する。Pull requests の write は、PR にラベルを付けるために要る（Issues の write では PR に付けられず 403 になる）。Issues の権限は要らない。`actor:*` ラベルの定義は `ochanuco/chabatake` が持つ。
+GitHub の token は、chakai 専用の fine-grained PAT（Pull requests と Issues が Read and write、Commit statuses と Actions が Read-only）を 1Password の `gh-deploy/chakai-worker` の `github_token` に置く。デプロイのたびに Worker の secret `GITHUB_TOKEN` に反映する。Pull requests の write は、PR にラベルを付けるために要る（Issues の write だけでは PR に付けられず 403 になる）。`actor:*` ラベルの定義は `ochanuco/chabatake` が持つ。
 
 初めて出すときは、デプロイで migration が当たった後に、`roster:init` で名簿を入れる。

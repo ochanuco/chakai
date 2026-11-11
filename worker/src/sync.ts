@@ -399,20 +399,28 @@ export const syncAndRecord = async (
 	caller: Principal | null,
 ): Promise<SyncResult> => {
 	const at = new Date().toISOString();
+	// 結果を残せなくても、同期そのものの成否は変えない
+	const record = (result: SyncResult) =>
+		recordSync(db, at, caller, result).catch((e: unknown) => {
+			console.error(
+				JSON.stringify({ message: "sync record failed", error: String(e) }),
+			);
+		});
+	let result: SyncResult;
 	try {
-		const result = await runSync(db, github, caller);
-		await recordSync(db, at, caller, result);
-		return result;
+		result = await runSync(db, github, caller);
 	} catch (e) {
-		await recordSync(db, at, caller, {
+		await record({
 			skipped: false,
 			synced: 0,
 			linked: [],
 			done: [],
 			warnings: [`同期が例外で終わった: ${e instanceof Error ? e.message : e}`],
-		}).catch(() => {});
+		});
 		throw e;
 	}
+	await record(result);
+	return result;
 };
 
 /** 同期の結果を、新しい順に返す */
