@@ -951,6 +951,21 @@ describe("GitHub を読めないとき", () => {
 	});
 });
 
+describe("Cron の同期が例外で終わるとき", () => {
+	it("理由をログに残し、scheduled の実行は落とさない", async () => {
+		const pending: Promise<unknown>[] = [];
+		await app.scheduled(
+			{} as ScheduledController,
+			{ ...tokenEnv, DB: {} as D1Database },
+			{
+				waitUntil: (p: Promise<unknown>) => pending.push(p),
+			} as unknown as ExecutionContext,
+		);
+		expect(pending).toHaveLength(1);
+		await expect(Promise.all(pending)).resolves.toEqual([undefined]);
+	});
+});
+
 describe("同期が他の書き込みと重なったとき", () => {
 	it("印から付けようとしたリンクを先に付けられていたら、もう付いているものとして進む", async () => {
 		const { project, repo } = await setup();

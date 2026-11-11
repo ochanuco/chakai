@@ -234,7 +234,12 @@ const toPull = (
 			: node.state === "CLOSED"
 				? "closed"
 				: "open";
-	if (typeof node.title !== "string" || typeof node.baseRefName !== "string") {
+	// デフォルトブランチを読めないまま merged を取り込むと、merge 先を見誤ったまま二度と読み直さない
+	if (
+		typeof node.title !== "string" ||
+		typeof node.baseRefName !== "string" ||
+		typeof repoNode.defaultBranchRef?.name !== "string"
+	) {
 		throw new GitHubError(`GitHub ${pullKey(ref)}: 応答が想定した形ではない`);
 	}
 	return {
@@ -377,6 +382,8 @@ export type ScanResult = {
 	scanned: Map<string, ScannedPull[]>;
 	/** 見終えなかった repo。読めなかったものと、ページの上限に届いたもの */
 	failed: string[];
+	/** 問い合わせごと失敗したときの理由 */
+	causes: string[];
 };
 
 /**
@@ -390,6 +397,7 @@ export const scanRepos = async (
 	const found = new Map<string, Map<number, ScannedPull>>();
 	const failed = new Set<string>();
 	const unreadable = new Set<string>();
+	const causes = new Set<string>();
 	let pending: ScanCursor[] = repos.map((r) => ({
 		...r,
 		open: true,
@@ -441,10 +449,13 @@ recent: pullRequests(first: 50, after: $ra${i}, orderBy: {field: UPDATED_AT, dir
 				));
 			} catch (e) {
 				if (!(e instanceof GitHubError)) throw e;
+				causes.add(e.message);
 				for (const c of batch) giveUp(c.repo);
 				continue;
 			}
-			const broken = new Set(errors.map((e) => e.path?.[0]));
+			const broken = new Set(
+				errors.map((e) => (Array.isArray(e?.path) ? e.path[0] : undefined)),
+			);
 			const viewer = (data.viewer as { login?: unknown } | null)?.login;
 			batch.forEach((c, i) => {
 				const node = data[`r${i}`] as ScanRepoNode;
@@ -502,7 +513,7 @@ recent: pullRequests(first: 50, after: $ra${i}, orderBy: {field: UPDATED_AT, dir
 	for (const [repo, pulls] of found) {
 		if (!unreadable.has(repo)) scanned.set(repo, [...pulls.values()]);
 	}
-	return { scanned, failed: [...failed] };
+	return { scanned, failed: [...failed], causes: [...causes] };
 };
 
 /** ラベルを付ける。この入口は、定義の無いラベルを作ってしまうので、定義があると確かめてから呼ぶ */

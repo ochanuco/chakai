@@ -77,10 +77,11 @@ const linkMarked = async (
 			times.includes(null) ? null : (times.sort()[0] ?? null),
 		]),
 	);
-	const { scanned, failed } = await scanRepos(
+	const { scanned, failed, causes } = await scanRepos(
 		gh,
 		[...since].map(([repo, at]) => ({ repo, since: at })),
 	);
+	result.warnings.push(...causes);
 	for (const repo of failed) {
 		result.warnings.push(`${repo} の PR を読み終えられなかった`);
 	}
