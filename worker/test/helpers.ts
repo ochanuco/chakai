@@ -72,41 +72,58 @@ export const working = (actor: string): As => ({
 	actor,
 });
 
-export const call = async (
-	as: As | null,
-	method: string,
-	path: string,
-	body?: unknown,
-	headers: Record<string, string | null> = {},
-	rawBody?: string,
-) => {
-	// 既定は実際の呼び出し元に合わせる。ブラウザ（email のログイン）は書き込みに Origin を付ける。
-	// null を渡したヘッダーは付けない
-	const all: Record<string, string> = {};
-	const defaults: Record<string, string | null> = {
-		"content-type": method === "GET" ? null : "application/json",
-		origin: as?.email && method !== "GET" ? BASE : null,
-	};
-	for (const [name, value] of Object.entries({ ...defaults, ...headers })) {
-		if (value !== null) all[name.toLowerCase()] = value;
-	}
-	if (as) {
-		all["Cf-Access-Jwt-Assertion"] =
-			as.token ??
-			(await sign(
-				as.email ? { email: as.email } : { common_name: as.clientId },
-			));
-		if (as.actor) all["X-Actor"] = as.actor;
-	}
-	return app.fetch(
-		new Request(`${BASE}${path}`, {
-			method,
-			headers: all,
-			body: rawBody ?? (body === undefined ? undefined : JSON.stringify(body)),
-		}),
-		env,
-	);
+type App = ReturnType<typeof createApp>;
+
+/** GitHub の代わりに答える fetch と token を持たせた入口。token を渡さなければ、token の無い Worker になる */
+export const appWithGitHub = (fetcher: typeof fetch, token?: string) => {
+	const custom = createApp({
+		keys: async () => pair.publicKey,
+		fetch: fetcher,
+	});
+	const environment = { ...env, GITHUB_TOKEN: token };
+	return { app: custom, env: environment, call: caller(custom, environment) };
 };
+
+const caller =
+	(target: App, environment: Env) =>
+	async (
+		as: As | null,
+		method: string,
+		path: string,
+		body?: unknown,
+		headers: Record<string, string | null> = {},
+		rawBody?: string,
+	) => {
+		// 既定は実際の呼び出し元に合わせる。ブラウザ（email のログイン）は書き込みに Origin を付ける。
+		// null を渡したヘッダーは付けない
+		const all: Record<string, string> = {};
+		const defaults: Record<string, string | null> = {
+			"content-type": method === "GET" ? null : "application/json",
+			origin: as?.email && method !== "GET" ? BASE : null,
+		};
+		for (const [name, value] of Object.entries({ ...defaults, ...headers })) {
+			if (value !== null) all[name.toLowerCase()] = value;
+		}
+		if (as) {
+			all["Cf-Access-Jwt-Assertion"] =
+				as.token ??
+				(await sign(
+					as.email ? { email: as.email } : { common_name: as.clientId },
+				));
+			if (as.actor) all["X-Actor"] = as.actor;
+		}
+		return target.fetch(
+			new Request(`${BASE}${path}`, {
+				method,
+				headers: all,
+				body:
+					rawBody ?? (body === undefined ? undefined : JSON.stringify(body)),
+			}),
+			environment,
+		);
+	};
+
+export const call = caller(app, env);
 
 export type TaskJson = {
 	id: string;
