@@ -46,6 +46,8 @@ export class FakeGitHub {
 	calls: string[] = [];
 	/** 入れると、どの呼び出しにもこの status を返す */
 	down: number | null = null;
+	/** token に PR へラベルを付ける権限が無い */
+	labelForbidden = false;
 	/** PR の一覧だけが null と errors で返る repo */
 	brokenLists = new Set<string>();
 	/** 入れると、fetch が例外を投げる（接続できない） */
@@ -140,6 +142,12 @@ export class FakeGitHub {
 				: Response.json({ message: "Forbidden" }, { status: 403 });
 		}
 		if (method === "POST" && rest[0] === "issues" && rest[2] === "labels") {
+			if (this.labelForbidden) {
+				return Response.json(
+					{ message: "Resource not accessible by personal access token" },
+					{ status: 403 },
+				);
+			}
 			const pull = repo.pulls.get(Number(rest[1]));
 			if (!pull)
 				return Response.json({ message: "Not Found" }, { status: 404 });

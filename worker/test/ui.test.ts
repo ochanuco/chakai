@@ -460,7 +460,7 @@ describe("画面", () => {
 	it("仕分け待ちが 0 件でも、画面を出す", () => {
 		const body = renderTriage(
 			{ rows: [], projects: [], names: new Map(), now: new Date() },
-			{ triage: 0 },
+			{ triage: 0, syncWarnings: 0 },
 		);
 		expect(body).toContain("仕分けを待っているタスクは無い");
 		expect(body).toContain('<span class="muted">0 件</span>');

@@ -3,7 +3,7 @@ import type { TaskEvent } from "../history.ts";
 import type { Link } from "../links.ts";
 import type { Actor, Label } from "../roster.ts";
 import type { SettingSource, Settings } from "../settings.ts";
-import { SYNC_ACTOR_ID } from "../sync.ts";
+import { SYNC_ACTOR_ID, type SyncRun } from "../sync.ts";
 import type {
 	ProjectRow,
 	ProjectView,
@@ -210,7 +210,7 @@ const deliverableRow = (link: Link, now: Date) => {
 					: pill(g.draft ? "open（draft）" : "open", "wait");
 	const [review, reviewTone] = REVIEW_PILLS[g.review ?? ""] ?? ["", ""];
 	const [checks, checksTone] = CHECKS_PILLS[g.checks ?? ""] ?? ["CI 不明", ""];
-	return html`<div class="row">${state}${linkTitle(link)}<span class="who">${g.repo}#${g.number}${g.base_branch ? html` → ${g.base_branch}` : ""}</span>${review ? pill(review, reviewTone) : ""}${g.state === null ? "" : pill(checks, checksTone)}<span class="who">${g.synced_at ? html`同期 ${when(g.synced_at, now)}` : "まだ同期していない"}</span></div>`;
+	return html`<div class="row">${state}${linkTitle(link)}<span class="who">${g.repo}#${g.number}${g.base_branch ? html` → ${g.base_branch}` : ""}${link.source === "marker" ? "・印から" : ""}</span>${review ? pill(review, reviewTone) : ""}${g.state === null ? "" : pill(checks, checksTone)}<span class="who">${g.synced_at ? html`同期 ${when(g.synced_at, now)}` : "まだ同期していない"}</span></div>`;
 };
 
 const referenceRow = (link: Link) =>
@@ -223,7 +223,11 @@ const linkSections = (links: Link[], now: Date) => {
 };
 
 /** どの画面にも出すもの。triage は仕分け待ちの件数 */
-export type Nav = { triage: number };
+export type Nav = {
+	triage: number;
+	/** 直近の同期の警告の数 */
+	syncWarnings: number;
+};
 
 const page = (title: string, content: Markup, nav: Nav): string =>
 	html`<!doctype html>
@@ -235,7 +239,7 @@ const page = (title: string, content: Markup, nav: Nav): string =>
 <style>${new Markup(CSS)}</style>
 </head>
 <body>
-<header><nav><a class="brand" href="/">chakai</a><a href="/">owner の番</a><a href="/triage">仕分け待ち <span class="n${nav.triage > 0 ? " some" : ""}">${nav.triage}</span></a><a href="/#projects">プロジェクト</a><a href="/settings">設定</a></nav></header>
+<header><nav><a class="brand" href="/">chakai</a><a href="/">owner の番</a><a href="/triage">仕分け待ち <span class="n${nav.triage > 0 ? " some" : ""}">${nav.triage}</span></a><a href="/#projects">プロジェクト</a><a href="/sync">同期${nav.syncWarnings > 0 ? html` <span class="n some">警告 ${nav.syncWarnings}</span>` : ""}</a><a href="/settings">設定</a></nav></header>
 <main>
 <p id="alert" class="alert" role="alert" hidden></p>
 ${content}
@@ -353,6 +357,29 @@ ${
 		: view.projects.map(
 				({ project, settings }) =>
 					html`<div class="card"><div><a href="/projects/${project.id}"><strong>${project.name}</strong></a></div>${settingForm(settings, "project", "上書きを消す")}</div>`,
+			)
+}`,
+		nav,
+	);
+
+export const renderSync = (
+	runs: SyncRun[],
+	names: Names,
+	now: Date,
+	nav: Nav,
+): string =>
+	page(
+		"同期",
+		html`<h1>GitHub との同期 <span class="muted">直近 ${runs.length} 回</span></h1>
+<p class="muted">1 時間ごとの同期と、手で呼んだ同期の結果。新しい順。</p>
+${
+	runs.length === 0
+		? html`<p class="muted">同期の記録はまだ無い。</p>`
+		: runs.map(
+				(r) =>
+					html`<div class="card"><div>${when(r.at, now)} <span class="label">${r.trigger === "cron" ? "Cron" : `手動（${nameOf(names, r.actor_id)}）`}</span>${r.skipped ? html`<span class="label">同期せず</span>` : ""}</div>
+<div class="muted">取り込んだ PR ${r.synced}・印から付けたリンク ${r.linked}・done にしたタスク ${r.done}</div>
+${r.warnings.map((w) => html`<p class="alert">${w}</p>`)}</div>`,
 			)
 }`,
 		nav,

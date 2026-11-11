@@ -7,6 +7,7 @@ import {
 	type LinkKind,
 	type LinkOwnerType,
 	type LinkRole,
+	type LinkSource,
 	links,
 	type PullChecks,
 	type PullReview,
@@ -51,6 +52,8 @@ export type Link = {
 	title: string;
 	note: string;
 	linked_by: string;
+	/** marker は、同期が PR の本文の印から付けた */
+	source: LinkSource;
 	created_at: string;
 	/** 成果物の PR だけが持つ。同期で取り込んだ状態 */
 	github: GithubPull | null;
@@ -69,6 +72,7 @@ const toLink = (row: LinkRow, github: GithubRow | null): Link => ({
 	title: row.title,
 	note: row.note,
 	linked_by: row.linkedBy,
+	source: row.source,
 	created_at: row.createdAt,
 	github: github && {
 		repo: github.repo,
@@ -212,6 +216,9 @@ export const deliverableWrites = async (
 	ref: PullRef,
 	pull: Pull | null,
 	text: { title: string; note: string },
+	/** 付けるべき actor のラベルと、もう付いているか。付いていなければ、同期が付け直す */
+	label: { name: string | null; applied: boolean },
+	source: LinkSource,
 ) => {
 	const row: LinkRow = {
 		id: newId(),
@@ -223,6 +230,7 @@ export const deliverableWrites = async (
 		title: text.title || (pull?.title ?? ""),
 		note: text.note,
 		linkedBy: who.actorId,
+		source,
 		createdAt: at,
 	};
 	const github: GithubRow = {
@@ -237,6 +245,8 @@ export const deliverableWrites = async (
 		checks: null,
 		syncedAt: null,
 		...(pull ? githubValues(pull, at) : {}),
+		actorLabel: label.name,
+		labeledAt: label.name && label.applied ? at : null,
 	};
 	const link = toLink(row, github);
 	const [known] = await db
@@ -363,8 +373,9 @@ export const addLink = async (
 
 	const warnings: string[] = [];
 	let state: Pull | null = null;
+	const label = pull ? await actorLabelOf(db, who.actorId) : null;
+	let labeled = false;
 	if (pull) {
-		const label = await actorLabelOf(db, who.actorId);
 		if (!github) {
 			warnings.push(NO_TOKEN_WARNING);
 		} else {
@@ -379,6 +390,7 @@ export const addLink = async (
 			if (state && label) {
 				const skipped = await applyActorLabel(github, state, label);
 				if (skipped) warnings.push(skipped);
+				labeled = !skipped;
 			} else if (!state && warnings.length === 0) {
 				return fail(
 					400,
@@ -402,6 +414,8 @@ export const addLink = async (
 				pull,
 				state,
 				input,
+				{ name: label, applied: labeled },
+				"explicit",
 			);
 			await writeAll(db, statements);
 			return ok({ ...link, warnings });
@@ -416,6 +430,7 @@ export const addLink = async (
 			title: input.title,
 			note: input.note,
 			linkedBy: who.actorId,
+			source: "explicit",
 			createdAt: at,
 		};
 		const link = toLink(row, null);
