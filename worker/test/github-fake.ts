@@ -11,6 +11,10 @@ export type FakePull = {
 	/** null は、statusCheckRollup を読めない（fine-grained PAT に Checks の権限が無い） */
 	rollup: string | null;
 	labels: string[];
+	/** null は、消えたアカウント */
+	author: string | null;
+	/** fork からの PR */
+	fork: boolean;
 };
 
 type FakeRun = {
@@ -30,6 +34,8 @@ type FakeRepo = {
 };
 
 export const TOKEN = "test-token";
+/** token のアカウント */
+export const VIEWER = "chakai-bot";
 
 /**
  * GitHub の代わりに答える。答えの形は、本物の GraphQL と REST の応答に合わせてある
@@ -40,6 +46,17 @@ export class FakeGitHub {
 	calls: string[] = [];
 	/** 入れると、どの呼び出しにもこの status を返す */
 	down: number | null = null;
+	/** PR の一覧だけが null と errors で返る repo */
+	brokenLists = new Set<string>();
+	/** 入れると、fetch が例外を投げる（接続できない） */
+	unreachable = false;
+	/** 入れると、JSON でない 200 を返す */
+	garbage = false;
+	/** PR を番号で読む問い合わせが来たときに、答える前に 1 度だけ呼ぶ。同期の途中に他の書き込みを挟むため */
+	beforePulls: (() => Promise<void>) | null = null;
+	/** 同時に答えを待っていた REST の GET の、最大の数 */
+	maxInFlight = 0;
+	private inFlight = 0;
 
 	repo(name: string, defaultBranch = "main") {
 		const repo: FakeRepo = {
@@ -67,6 +84,8 @@ export class FakeGitHub {
 			reviews: [],
 			rollup: "SUCCESS",
 			labels: [],
+			author: repo.split("/")[0] ?? null,
+			fork: false,
 			...target.pulls.get(number),
 			...patch,
 		};
@@ -86,11 +105,24 @@ export class FakeGitHub {
 		if (headers.get("authorization") !== `Bearer ${TOKEN}`) {
 			return Response.json({ message: "Bad credentials" }, { status: 401 });
 		}
+		if (this.unreachable) throw new TypeError("Network connection lost");
+		if (this.garbage) return new Response("<html>oops</html>");
 		if (this.down !== null) {
 			return Response.json({ message: "down" }, { status: this.down });
 		}
 		if (method === "POST" && url.pathname === "/graphql") {
-			return this.graphql(JSON.parse(String(init?.body)));
+			const body = JSON.parse(String(init?.body));
+			if (this.beforePulls && body.variables.k0 !== undefined) {
+				const hook = this.beforePulls;
+				this.beforePulls = null;
+				await hook();
+			}
+			return this.graphql(body);
+		}
+		if (method === "GET") {
+			this.maxInFlight = Math.max(this.maxInFlight, ++this.inFlight);
+			await new Promise((resolve) => setTimeout(resolve, 1));
+			this.inFlight--;
 		}
 		const [, owner, name, ...rest] = url.pathname.split("/").slice(1);
 		const repo = this.repos.get(`${owner}/${name}`);
@@ -124,7 +156,9 @@ export class FakeGitHub {
 
 	private graphql(body: { query: string; variables: Record<string, unknown> }) {
 		const { query, variables: v } = body;
-		const data: Record<string, unknown> = {};
+		const data: Record<string, unknown> = query.includes("viewer { login }")
+			? { viewer: { login: VIEWER } }
+			: {};
 		const errors: { type: string; path: string[]; message: string }[] = [];
 		for (let i = 0; v[`o${i}`] !== undefined; i++) {
 			const name = `${v[`o${i}`]}/${v[`n${i}`]}`;
@@ -142,6 +176,15 @@ export class FakeGitHub {
 					type: "NOT_FOUND",
 					path: [alias],
 					message: `Could not resolve to a Repository with the name '${name}'.`,
+				});
+				continue;
+			}
+			if (!isPull && this.brokenLists.has(name)) {
+				data[alias] = { open: null, recent: null };
+				errors.push({
+					type: "FORBIDDEN",
+					path: [alias, "open"],
+					message: "Resource not accessible by personal access token",
 				});
 				continue;
 			}
@@ -210,6 +253,8 @@ export class FakeGitHub {
 					number: p.number,
 					body: p.body,
 					updatedAt: p.updatedAt,
+					isCrossRepository: p.fork,
+					author: p.author === null ? null : { login: p.author },
 				})),
 			};
 		};

@@ -1,6 +1,7 @@
 import { env } from "cloudflare:workers";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { FakeGitHub, type FakePull, TOKEN } from "./github-fake.ts";
+import { markedTaskIds } from "../src/sync.ts";
+import { FakeGitHub, type FakePull, TOKEN, VIEWER } from "./github-fake.ts";
 import {
 	type As,
 	appWithGitHub,
@@ -24,7 +25,25 @@ const withoutToken = appWithGitHub(gh.fetch);
 beforeEach(() => {
 	gh.calls = [];
 	gh.down = null;
+	gh.unreachable = false;
+	gh.garbage = false;
+	gh.beforePulls = null;
 });
+
+const cron = async () => {
+	const pending: Promise<unknown>[] = [];
+	await app.scheduled({} as ScheduledController, tokenEnv, {
+		waitUntil: (p: Promise<unknown>) => pending.push(p),
+	} as unknown as ExecutionContext);
+	await Promise.all(pending);
+};
+
+const scannedAt = async (repo: string) =>
+	(
+		await env.DB.prepare("SELECT scanned_at FROM project_repos WHERE repo = ?")
+			.bind(repo)
+			.first<{ scanned_at: string | null }>()
+	)?.scanned_at;
 
 type LinkJson = {
 	id: string;
@@ -495,14 +514,14 @@ describe("印による自動リンク", () => {
 			{
 				role: "deliverable",
 				title: "印つき",
-				linked_by: "sync",
+				linked_by: "owner",
 				github: { repo, number: 1, state: "open" },
 			},
 		]);
 		expect(gh.repos.get(repo)?.pulls.get(1)?.labels).toEqual(["actor:yukarin"]);
 		expect((await eventsOf(task.id)).at(-1)).toMatchObject({
 			field: "link",
-			actor_id: "sync",
+			actor_id: "owner",
 		});
 		expect((await read(unassigned.id)).links).toHaveLength(1);
 
@@ -626,7 +645,7 @@ describe("自動で done にする規則", () => {
 		// 手動の同期は、呼んだ呼び出し元を残す
 		expect((await eventsOf(task.id)).at(-1)).toMatchObject({
 			field: "state",
-			actor_id: "sync",
+			actor_id: "owner",
 			caller_id: "caller-mac",
 		});
 	});
@@ -684,8 +703,8 @@ describe("自動で done にする規則", () => {
 			waiting_on: "子タスクがすべて片付いた",
 		});
 		expect((await eventsOf(parent.id)).slice(-2)).toMatchObject([
-			{ field: "state", actor_id: "sync", after: JSON.stringify("review") },
-			{ field: "waiting_on", actor_id: "sync" },
+			{ field: "state", actor_id: "owner", after: JSON.stringify("review") },
+			{ field: "waiting_on", actor_id: "owner" },
 		]);
 	});
 
@@ -833,5 +852,164 @@ describe("画面と MCP", () => {
 		const { result } = await init.json<{ result: { instructions: string } }>();
 		expect(result.instructions).toContain("chakai:<タスクの ID>");
 		expect(result.instructions).toContain("add_link");
+	});
+});
+
+describe("印を信じる PR", () => {
+	it("fork からの PR と、repo の owner でも token のアカウントでもない人の PR の印は無視する", async () => {
+		const { project, repo } = await setup();
+		const tasks = await Promise.all(
+			Array.from({ length: 5 }, () => newTask(project.id)),
+		);
+		const body = (i: number) => ({ body: `chakai:${tasks[i]?.id}` });
+		gh.pull(repo, 1, { ...body(0), author: "stranger" });
+		gh.pull(repo, 2, { ...body(1), fork: true });
+		gh.pull(repo, 3, { ...body(2), author: null });
+		gh.pull(repo, 4, { ...body(3), author: VIEWER });
+		gh.pull(repo, 5, { ...body(4), author: "Example" });
+		await cron();
+		const linked = await Promise.all(
+			tasks.map(async (t) => (await read(t.id)).links.length),
+		);
+		expect(linked).toEqual([0, 0, 0, 1, 1]);
+		expect((await read(tasks[3]?.id ?? "")).links[0]?.linked_by).toBe("sync");
+	});
+
+	it("前後に文字が続くものは印と読まない", () => {
+		const id = "01a1c861-62b6-7828-8d3e-ef5c5362c40f";
+		expect(markedTaskIds(`chakai:${id}`)).toEqual([id]);
+		expect(markedTaskIds(`（chakai:${id}）。`)).toEqual([id]);
+		expect(markedTaskIds(`refs chakai:${id}, chakai:${id}`)).toEqual([id]);
+		expect(markedTaskIds(`notchakai:${id}`)).toEqual([]);
+		expect(markedTaskIds(`my-chakai:${id}`)).toEqual([]);
+		expect(markedTaskIds(`chakai:${id}0`)).toEqual([]);
+		expect(markedTaskIds(`chakai:${id}-copy`)).toEqual([]);
+		expect(markedTaskIds(`chakai: ${id}`)).toEqual([]);
+	});
+});
+
+describe("GitHub を読めないとき", () => {
+	it("PR の一覧だけが errors 付きの null で返った repo は失敗として扱い、起点を進めない", async () => {
+		const { project, repo } = await setup();
+		const fine = `example/fine-${++seq}`;
+		gh.repo(fine);
+		await call(owner, "POST", `/v1/projects/${project.id}/repos`, {
+			repo: fine,
+		});
+		const task = await newTask(project.id);
+		const other = await newTask(project.id);
+		gh.pull(repo, 1, { body: `chakai:${task.id}` });
+		gh.pull(fine, 1, { body: `chakai:${other.id}` });
+		gh.brokenLists.add(repo);
+		const result = await sync();
+		expect(result.warnings).toContain(`${repo} の PR を読み終えられなかった`);
+		expect(await scannedAt(repo)).toBeNull();
+		expect(await scannedAt(fine)).toBeTruthy();
+		expect((await read(other.id)).links).toHaveLength(1);
+
+		gh.brokenLists.delete(repo);
+		await sync();
+		expect((await read(task.id)).links).toHaveLength(1);
+		expect(await scannedAt(repo)).toBeTruthy();
+	});
+
+	it("接続できなくても、JSON でない応答でも、同期は警告を返して終わる", async () => {
+		const { project, repo } = await setup();
+		const task = await newTask(project.id, { state: "todo" });
+		await deliver(task.id, repo, 1);
+		const before = await scannedAt(repo);
+		gh.unreachable = true;
+		const lost = await sync();
+		expect(lost.warnings.join("\n")).toContain("Network connection lost");
+		expect(lost.warnings).toContain(`${repo} の PR を読み終えられなかった`);
+		await expect(cron()).resolves.toBeUndefined();
+		gh.unreachable = false;
+		gh.garbage = true;
+		const garbage = await sync();
+		expect(garbage.warnings.join("\n")).toContain("応答が想定した形ではない");
+		expect(await scannedAt(repo)).toBe(before);
+		expect((await read(task.id)).state).toBe("todo");
+
+		const res = await link(task.id, {
+			url: `https://github.com/${repo}/pull/2`,
+			role: "deliverable",
+		});
+		expect(res.status).toBe(201);
+		expect((await res.json<LinkJson>()).warnings).toHaveLength(1);
+	});
+
+	it("1 本の PR の応答が崩れていても、ほかの PR は取り込む", async () => {
+		const { project, repo } = await setup();
+		const task = await newTask(project.id, { state: "todo" });
+		await deliver(task.id, repo, 1);
+		await deliver(task.id, repo, 2);
+		gh.pull(repo, 1, { title: undefined as unknown as string });
+		gh.pull(repo, 2, { isDraft: true });
+		const result = await sync();
+		expect(result.warnings).toContain(`${repo}#1 を読めなかった`);
+		expect((await read(task.id)).links[1]?.github?.draft).toBe(true);
+	});
+});
+
+describe("Cron の同期が例外で終わるとき", () => {
+	it("理由をログに残し、scheduled の実行は落とさない", async () => {
+		const pending: Promise<unknown>[] = [];
+		await app.scheduled(
+			{} as ScheduledController,
+			{ ...tokenEnv, DB: {} as D1Database },
+			{
+				waitUntil: (p: Promise<unknown>) => pending.push(p),
+			} as unknown as ExecutionContext,
+		);
+		expect(pending).toHaveLength(1);
+		await expect(Promise.all(pending)).resolves.toEqual([undefined]);
+	});
+});
+
+describe("同期が他の書き込みと重なったとき", () => {
+	it("印から付けようとしたリンクを先に付けられていたら、もう付いているものとして進む", async () => {
+		const { project, repo } = await setup();
+		const task = await newTask(project.id);
+		const other = await newTask(project.id);
+		gh.pull(repo, 1, { body: `chakai:${task.id} chakai:${other.id}` });
+		const url = `https://github.com/${repo}/pull/1`;
+		gh.beforePulls = async () => {
+			const res = await link(task.id, { url, role: "deliverable" });
+			expect(res.status).toBe(201);
+		};
+		const result = await sync();
+		expect(result.linked).toContainEqual({ task_id: other.id, url });
+		expect(result.linked).not.toContainEqual({ task_id: task.id, url });
+		expect((await read(task.id)).links).toHaveLength(1);
+		expect(
+			(await eventsOf(task.id)).filter((e) => e.field === "link"),
+		).toHaveLength(1);
+	});
+});
+
+describe("手で呼んだ同期の履歴", () => {
+	it("呼んだ人と呼び出し元で残り、画面で Cron とは出ない", async () => {
+		const { project, repo } = await setup();
+		const viaLogin = await newTask(project.id, { state: "todo" });
+		const viaToken = await newTask(project.id, { state: "todo" });
+		await deliver(viaLogin.id, repo, 1, MERGED);
+		await sync(owner);
+		await deliver(viaToken.id, repo, 2, MERGED);
+		await sync(working("yukarin"));
+		expect((await eventsOf(viaLogin.id)).at(-1)).toMatchObject({
+			field: "state",
+			actor_id: "owner",
+			caller_id: null,
+		});
+		expect((await eventsOf(viaToken.id)).at(-1)).toMatchObject({
+			field: "state",
+			actor_id: "yukarin",
+			caller_id: WORKING.id,
+		});
+		const page = async (id: string) =>
+			(await call(owner, "GET", `/tasks/${id}`)).text();
+		expect(await page(viaLogin.id)).toContain("Owner・ブラウザ・");
+		expect(await page(viaLogin.id)).not.toContain("Cron");
+		expect(await page(viaToken.id)).toContain("Yukarin・working・");
 	});
 });

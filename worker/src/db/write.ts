@@ -12,7 +12,7 @@ export const writeAll = async (db: Db, statements: Statement[]) => {
 // tasks と settings の revision の trigger が出す文の、共通の部分
 export const CHANGED_SINCE_READ = "changed since read";
 
-const isConflict = (e: unknown) =>
+export const isConflict = (e: unknown) =>
 	e instanceof Error &&
 	new RegExp(`UNIQUE constraint failed|${CHANGED_SINCE_READ}`).test(
 		`${e.message} ${String(e.cause ?? "")}`,
