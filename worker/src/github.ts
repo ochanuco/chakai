@@ -8,22 +8,37 @@ export class GitHubError extends Error {}
 const API = "https://api.github.com";
 
 const request = async (gh: GitHub, path: string, init: RequestInit = {}) => {
-	const res = await gh.fetch(`${API}${path}`, {
-		...init,
-		headers: {
-			accept: "application/vnd.github+json",
-			authorization: `Bearer ${gh.token}`,
-			"content-type": "application/json",
-			"user-agent": "chakai",
-			"x-github-api-version": "2022-11-28",
-		},
-	});
-	if (!res.ok) {
-		throw new GitHubError(
-			`GitHub ${init.method ?? "GET"} ${path}: ${res.status}`,
-		);
+	const what = `GitHub ${init.method ?? "GET"} ${path}`;
+	let res: Response;
+	try {
+		res = await gh.fetch(`${API}${path}`, {
+			...init,
+			headers: {
+				accept: "application/vnd.github+json",
+				authorization: `Bearer ${gh.token}`,
+				"content-type": "application/json",
+				"user-agent": "chakai",
+				"x-github-api-version": "2022-11-28",
+			},
+		});
+	} catch (e) {
+		throw new GitHubError(`${what}: ${e instanceof Error ? e.message : e}`);
 	}
+	if (!res.ok) throw new GitHubError(`${what}: ${res.status}`);
 	return res;
+};
+
+/**
+ * GitHub の応答を読む処理を包み、JSON でない応答や想定と違う形で出る例外を GitHubError に揃える。
+ * 呼ぶ側が GitHubError だけを「この repo や PR は読めなかった」として扱えるようにするため
+ */
+const reading = async <T>(what: string, read: () => T | Promise<T>) => {
+	try {
+		return await read();
+	} catch (e) {
+		if (e instanceof GitHubError) throw e;
+		throw new GitHubError(`${what}: 応答が想定した形ではない`);
+	}
 };
 
 type GraphQlError = { type?: string; path?: unknown[]; message?: string };
@@ -41,13 +56,19 @@ const graphql = async <T>(
 		method: "POST",
 		body: JSON.stringify({ query, variables }),
 	});
-	const body = await res.json<{ data?: T | null; errors?: GraphQlError[] }>();
-	if (!body.data) {
-		throw new GitHubError(
-			`GitHub GraphQL: ${body.errors?.map((e) => e.message).join("; ") ?? "data が無い"}`,
-		);
-	}
-	return { data: body.data, errors: body.errors ?? [] };
+	return reading("GitHub GraphQL", async () => {
+		const body = await res.json<{
+			data?: T | null;
+			errors?: GraphQlError[];
+		}>();
+		const errors = Array.isArray(body.errors) ? body.errors : [];
+		if (typeof body.data !== "object" || body.data === null) {
+			throw new GitHubError(
+				`GitHub GraphQL: ${errors.map((e) => e.message).join("; ") || "data が無い"}`,
+			);
+		}
+		return { data: body.data, errors };
+	});
 };
 
 const splitRepo = (repo: string) => {
@@ -141,84 +162,111 @@ const checksFromRest = async (
 	sha: string,
 ): Promise<PullChecks | null> => {
 	try {
-		const [runsRes, statusRes] = await Promise.all([
-			request(gh, `/repos/${repo}/actions/runs?head_sha=${sha}&per_page=100`),
-			request(gh, `/repos/${repo}/commits/${sha}/status`),
-		]);
-		const { workflow_runs: runs } = await runsRes.json<{
-			workflow_runs: WorkflowRun[];
-		}>();
-		const status = await statusRes.json<{
-			state: string;
-			total_count: number;
-		}>();
-		// 同じ workflow を流し直した run が並ぶので、workflow ごとに新しいものだけを見る
-		const latest = new Map<number, WorkflowRun>();
-		for (const run of runs) {
-			const seen = latest.get(run.workflow_id);
-			if (!seen || seen.created_at < run.created_at) {
-				latest.set(run.workflow_id, run);
-			}
-		}
-		const results: PullChecks[] = [...latest.values()].map((run) => {
-			if (run.status !== "completed") return "pending";
-			return FAILED_CONCLUSIONS.includes(run.conclusion ?? "")
-				? "failure"
-				: "success";
-		});
-		// status が 1 つも無いときも state は pending で返る
-		if (status.total_count > 0) {
-			results.push(
-				status.state === "success"
-					? "success"
-					: status.state === "pending"
-						? "pending"
-						: "failure",
+		return await reading(`GitHub ${repo} の CI`, async () => {
+			const runsRes = await request(
+				gh,
+				`/repos/${repo}/actions/runs?head_sha=${sha}&per_page=100`,
 			);
-		}
-		if (results.includes("failure")) return "failure";
-		if (results.includes("pending")) return "pending";
-		return results.length > 0 ? "success" : "none";
+			const { workflow_runs: runs } = await runsRes.json<{
+				workflow_runs: WorkflowRun[];
+			}>();
+			const statusRes = await request(
+				gh,
+				`/repos/${repo}/commits/${sha}/status`,
+			);
+			const status = await statusRes.json<{
+				state: string;
+				total_count: number;
+			}>();
+			return checksOf(runs, status);
+		});
 	} catch (e) {
 		if (!(e instanceof GitHubError)) throw e;
 		return null;
 	}
 };
 
-const toPull = async (
-	gh: GitHub,
+const checksOf = (
+	runs: WorkflowRun[],
+	status: { state: string; total_count: number },
+): PullChecks => {
+	// 同じ workflow を流し直した run が並ぶので、workflow ごとに新しいものだけを見る
+	const latest = new Map<number, WorkflowRun>();
+	for (const run of runs) {
+		const seen = latest.get(run.workflow_id);
+		if (!seen || seen.created_at < run.created_at) {
+			latest.set(run.workflow_id, run);
+		}
+	}
+	const results: PullChecks[] = [...latest.values()].map((run) => {
+		if (run.status !== "completed") return "pending";
+		return FAILED_CONCLUSIONS.includes(run.conclusion ?? "")
+			? "failure"
+			: "success";
+	});
+	// status が 1 つも無いときも state は pending で返る
+	if (status.total_count > 0) {
+		results.push(
+			status.state === "success"
+				? "success"
+				: status.state === "pending"
+					? "pending"
+					: "failure",
+		);
+	}
+	if (results.includes("failure")) return "failure";
+	if (results.includes("pending")) return "pending";
+	return results.length > 0 ? "success" : "none";
+};
+
+/** rollup から CI の結果が決まらなかった PR は、checks を null にして head の commit を返す */
+const toPull = (
 	ref: PullRef,
 	repoNode: NonNullable<PullRepoNode>,
 	node: PullNode,
 	withLabel: boolean,
-): Promise<Pull> => {
+): { pull: Pull; sha: string | null } => {
 	const rollup = node.commits?.nodes[0]?.commit.statusCheckRollup?.state;
+	const checks = ROLLUP[rollup ?? ""] ?? null;
 	const state: PullState =
 		node.state === "MERGED"
 			? "merged"
 			: node.state === "CLOSED"
 				? "closed"
 				: "open";
+	if (typeof node.title !== "string" || typeof node.baseRefName !== "string") {
+		throw new GitHubError(`GitHub ${pullKey(ref)}: 応答が想定した形ではない`);
+	}
 	return {
-		...ref,
-		title: node.title,
-		state,
-		draft: node.isDraft,
-		baseBranch: node.baseRefName,
-		mergedIntoDefault:
-			state === "merged" &&
-			node.baseRefName === repoNode.defaultBranchRef?.name,
-		review: reviewOf(node),
-		checks:
-			ROLLUP[rollup ?? ""] ??
-			(await checksFromRest(gh, ref.repo, node.headRefOid)),
-		labels: node.labels?.nodes.map((l) => l.name) ?? [],
-		labelDefined: withLabel ? Boolean(repoNode.label) : null,
+		pull: {
+			...ref,
+			title: node.title,
+			state,
+			draft: Boolean(node.isDraft),
+			baseBranch: node.baseRefName,
+			mergedIntoDefault:
+				state === "merged" &&
+				node.baseRefName === repoNode.defaultBranchRef?.name,
+			review: reviewOf(node),
+			checks,
+			labels: node.labels?.nodes.map((l) => l.name) ?? [],
+			labelDefined: withLabel ? Boolean(repoNode.label) : null,
+		},
+		sha: checks === null ? node.headRefOid : null,
 	};
 };
 
+/**
+ * rollup を読めなかった PR の CI を REST で読める残りの本数。1 本につき 2 回呼ぶので、
+ * 1 回の同期で使い切ったら、残りの PR の CI は不明のままにする
+ */
+export type ChecksBudget = { remaining: number };
+
+export const CHECKS_FALLBACK_PER_SYNC = 20;
+const CHECKS_FALLBACK_CONCURRENCY = 4;
+
 // 1 つの問い合わせに並べる数。GitHub は 1 つの問い合わせが辿る node の数に上限を持つ
-const PULLS_PER_QUERY = 30;
+export const PULLS_PER_QUERY = 30;
 const REPOS_PER_QUERY = 10;
 
 const chunks = <T>(items: T[], size: number): T[][] =>
@@ -233,8 +281,10 @@ const chunks = <T>(items: T[], size: number): T[][] =>
 export const fetchPulls = async (
 	gh: GitHub,
 	refs: (PullRef & { label?: string })[],
+	budget: ChecksBudget = { remaining: CHECKS_FALLBACK_PER_SYNC },
 ): Promise<(Pull | null)[]> => {
 	const pulls: (Pull | null)[] = [];
+	const unchecked: { pull: Pull; sha: string }[] = [];
 	for (const batch of chunks(refs, PULLS_PER_QUERY)) {
 		const variables: Record<string, unknown> = {};
 		const declarations: string[] = [];
@@ -257,23 +307,37 @@ export const fetchPulls = async (
 			`query(${declarations.join(", ")}) { ${selections.join("\n")} }`,
 			variables,
 		);
-		pulls.push(
-			...(await Promise.all(
-				batch.map((ref, i) => {
-					const repoNode = data[`p${i}`];
-					return repoNode?.pullRequest
-						? toPull(
-								gh,
-								{ repo: ref.repo, number: ref.number },
-								repoNode,
-								repoNode.pullRequest,
-								ref.label !== undefined,
-							)
-						: null;
-				}),
-			)),
-		);
+		for (const [i, ref] of batch.entries()) {
+			const repoNode = data[`p${i}`];
+			let read: ReturnType<typeof toPull> | null = null;
+			try {
+				read = repoNode?.pullRequest
+					? toPull(
+							{ repo: ref.repo, number: ref.number },
+							repoNode,
+							repoNode.pullRequest,
+							ref.label !== undefined,
+						)
+					: null;
+			} catch {
+				// 形の崩れた 1 本は読めなかったものとして、ほかの PR は続ける
+			}
+			pulls.push(read?.pull ?? null);
+			if (read?.sha && budget.remaining > 0) {
+				budget.remaining--;
+				unchecked.push({ pull: read.pull, sha: read.sha });
+			}
+		}
 	}
+	const workers = Array.from(
+		{ length: CHECKS_FALLBACK_CONCURRENCY },
+		async () => {
+			for (let next = unchecked.pop(); next; next = unchecked.pop()) {
+				next.pull.checks = await checksFromRest(gh, next.pull.repo, next.sha);
+			}
+		},
+	);
+	await Promise.all(workers);
 	return pulls;
 };
 
@@ -281,12 +345,18 @@ export type ScannedPull = { number: number; body: string };
 
 type PullPage = {
 	pageInfo: { hasNextPage: boolean; endCursor: string | null };
-	nodes: { number: number; body: string; updatedAt: string }[];
+	nodes: {
+		number: number;
+		body: string;
+		updatedAt: string;
+		isCrossRepository: boolean;
+		author: { login: string } | null;
+	}[];
 };
 
 type ScanRepoNode = { open?: PullPage; recent?: PullPage } | null;
 
-const SCAN_PAGE = `pageInfo { hasNextPage endCursor } nodes { number body updatedAt }`;
+const SCAN_PAGE = `pageInfo { hasNextPage endCursor } nodes { number body updatedAt isCrossRepository author { login } }`;
 // 1 つの repo で辿るページの上限。超えた分は読まず、読めたところまでを返す
 const MAX_SCAN_ROUNDS = 5;
 
@@ -300,7 +370,10 @@ type ScanCursor = {
 };
 
 export type ScanResult = {
-	/** 読めた repo と、その開いている PR・since の後に更新された PR */
+	/**
+	 * 読めた repo と、その開いている PR・since の後に更新された PR。
+	 * fork からの PR と、repo の owner でも token のアカウントでもない人が作った PR は入らない
+	 */
 	scanned: Map<string, ScannedPull[]>;
 	/** 見終えなかった repo。読めなかったものと、ページの上限に届いたもの */
 	failed: string[];
@@ -353,41 +426,74 @@ open: pullRequests(states: OPEN, first: 50, after: $oa${i}, orderBy: {field: UPD
 recent: pullRequests(first: 50, after: $ra${i}, orderBy: {field: UPDATED_AT, direction: DESC}) @include(if: $wr${i}) { ${SCAN_PAGE} }
 }`;
 			});
-			const { data } = await graphql<Record<string, ScanRepoNode>>(
-				gh,
-				`query(${declarations.join(", ")}) { ${selections.join("\n")} }`,
-				variables,
-			);
+			const giveUp = (repo: string) => {
+				failed.add(repo);
+				// 途中のページで読めなくなった repo は、読めたところまでを使う
+				if (round === 0) unreadable.add(repo);
+			};
+			let data: Record<string, unknown>;
+			let errors: GraphQlError[];
+			try {
+				({ data, errors } = await graphql<Record<string, unknown>>(
+					gh,
+					`query(${declarations.join(", ")}) { viewer { login } ${selections.join("\n")} }`,
+					variables,
+				));
+			} catch (e) {
+				if (!(e instanceof GitHubError)) throw e;
+				for (const c of batch) giveUp(c.repo);
+				continue;
+			}
+			const broken = new Set(errors.map((e) => e.path?.[0]));
+			const viewer = (data.viewer as { login?: unknown } | null)?.login;
 			batch.forEach((c, i) => {
-				const node = data[`r${i}`];
+				const node = data[`r${i}`] as ScanRepoNode;
 				const pulls = found.get(c.repo);
-				if (!node || !pulls) {
-					failed.add(c.repo);
-					unreadable.add(c.repo);
+				// 一覧の一部だけが null で返ることがある。欠けた一覧を「PR が無い」と読まないよう、repo ごと失敗にする
+				if (
+					!node ||
+					!pulls ||
+					broken.has(`r${i}`) ||
+					(c.open && !node.open) ||
+					(c.recent && !node.recent)
+				) {
+					giveUp(c.repo);
 					return;
 				}
-				for (const p of node.open?.nodes ?? []) {
-					pulls.set(p.number, { number: p.number, body: p.body });
+				try {
+					const since = c.since;
+					const recent = node.recent?.nodes ?? [];
+					const fresh = recent.filter(
+						(p) => since === null || p.updatedAt > since,
+					);
+					const trusted = [splitRepo(c.repo).owner, viewer]
+						.filter((login): login is string => typeof login === "string")
+						.map((login) => login.toLowerCase());
+					for (const p of [...(node.open?.nodes ?? []), ...fresh]) {
+						// 公開 repo では誰でも PR を作れるので、本文の印を信じるのは身内の PR だけにする
+						if (
+							p.isCrossRepository !== false ||
+							!trusted.includes(p.author?.login.toLowerCase() ?? "")
+						) {
+							continue;
+						}
+						pulls.set(p.number, { number: p.number, body: String(p.body) });
+					}
+					const more: ScanCursor = {
+						...c,
+						open: Boolean(node.open?.pageInfo.hasNextPage),
+						openAfter: node.open?.pageInfo.endCursor ?? null,
+						// since より古い PR に届いたら、その先は見ない
+						recent:
+							since !== null &&
+							Boolean(node.recent?.pageInfo.hasNextPage) &&
+							fresh.length === recent.length,
+						recentAfter: node.recent?.pageInfo.endCursor ?? null,
+					};
+					if (more.open || more.recent) next.push(more);
+				} catch {
+					giveUp(c.repo);
 				}
-				const since = c.since;
-				const fresh = (node.recent?.nodes ?? []).filter(
-					(p) => since === null || p.updatedAt > since,
-				);
-				for (const p of fresh) {
-					pulls.set(p.number, { number: p.number, body: p.body });
-				}
-				const more: ScanCursor = {
-					...c,
-					open: Boolean(node.open?.pageInfo.hasNextPage),
-					openAfter: node.open?.pageInfo.endCursor ?? null,
-					// since より古い PR に届いたら、その先は見ない
-					recent:
-						since !== null &&
-						Boolean(node.recent?.pageInfo.hasNextPage) &&
-						fresh.length === (node.recent?.nodes.length ?? 0),
-					recentAfter: node.recent?.pageInfo.endCursor ?? null,
-				};
-				if (more.open || more.recent) next.push(more);
 			});
 		}
 		pending = next;

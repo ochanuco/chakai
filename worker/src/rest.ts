@@ -213,7 +213,7 @@ export const handleRest = async (
 		case "DELETE links/:id":
 			return respond(await removeLink(db, who, id));
 		case "POST sync":
-			return Response.json(await runSync(db, github, who.callerId));
+			return Response.json(await runSync(db, github, who));
 		case "GET tasks": {
 			const query = parse(TaskQuery, Object.fromEntries(url.searchParams));
 			if (!query.ok) return failure(query.error);

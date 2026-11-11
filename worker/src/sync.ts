@@ -2,11 +2,14 @@ import { and, eq, inArray, isNull, ne, or } from "drizzle-orm";
 import type { Principal } from "./auth.ts";
 import type { Db } from "./db/client.ts";
 import { githubLinks, links, projectRepos, tasks } from "./db/schema.ts";
-import { writeAll } from "./db/write.ts";
+import { isConflict, writeAll } from "./db/write.ts";
 import {
+	CHECKS_FALLBACK_PER_SYNC,
+	type ChecksBudget,
 	fetchPulls,
 	type GitHub,
 	GitHubError,
+	PULLS_PER_QUERY,
 	type PullRef,
 	pullKey,
 	scanRepos,
@@ -22,7 +25,7 @@ import {
 } from "./links.ts";
 import { completeDelivered } from "./tasks.ts";
 
-/** 同期が自動で動かした書き込みを残す actor。名簿には migration が無効な行として入れる */
+/** Cron の同期が動かした書き込みを残す actor。名簿には migration が無効な行として入れる */
 export const SYNC_ACTOR_ID = "sync";
 
 export type SyncResult = {
@@ -37,9 +40,9 @@ export type SyncResult = {
 	warnings: string[];
 };
 
-// タスクの ID は UUID v7
+// タスクの ID は UUID v7。前後に英数字やハイフンが続くもの（別の語の一部、長い ID の途中）は印と読まない
 const MARKER =
-	/chakai:([0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})/gi;
+	/(?<![0-9a-z_-])chakai:([0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})(?![0-9a-z_-])/gi;
 
 export const markedTaskIds = (body: string): string[] => [
 	...new Set([...body.matchAll(MARKER)].map((m) => (m[1] ?? "").toLowerCase())),
@@ -54,6 +57,7 @@ const linkMarked = async (
 	gh: GitHub,
 	who: Principal,
 	result: SyncResult,
+	budget: ChecksBudget,
 ) => {
 	const startedAt = new Date().toISOString();
 	const rows = await db.select().from(projectRepos);
@@ -131,6 +135,7 @@ const linkMarked = async (
 	const pulls = await fetchPulls(
 		gh,
 		fresh.map((f) => ({ ...f.ref, ...(f.label ? { label: f.label } : {}) })),
+		budget,
 	);
 	for (const [i, { ref, task, label }] of fresh.entries()) {
 		const pull = pulls[i];
@@ -145,7 +150,13 @@ const linkMarked = async (
 			pull,
 			{ title: "", note: "" },
 		);
-		await writeAll(db, statements);
+		try {
+			await writeAll(db, statements);
+		} catch (e) {
+			// 別の同期や add_link が、読んでから書くまでの間に同じリンクを付けた。もう付いている
+			if (!isConflict(e)) throw e;
+			continue;
+		}
 		result.linked.push({ task_id: task.id, url: link.url });
 		if (label) {
 			const skipped = await applyActorLabel(gh, pull, label);
@@ -168,6 +179,7 @@ const refreshPulls = async (
 	gh: GitHub,
 	_who: Principal,
 	result: SyncResult,
+	budget: ChecksBudget,
 ) => {
 	const rows = await db
 		.select({
@@ -177,11 +189,27 @@ const refreshPulls = async (
 		})
 		.from(githubLinks)
 		.where(or(isNull(githubLinks.state), ne(githubLinks.state, "merged")));
-	const refs = new Map<string, PullRef>();
-	for (const r of rows) refs.set(pullKey(r), r);
-	const keys = [...refs.keys()];
-	const fetched = await fetchPulls(gh, [...refs.values()]);
-	const pulls = new Map(keys.map((key, i) => [key, fetched[i] ?? null]));
+	const unique = new Map<string, PullRef>();
+	for (const r of rows) unique.set(pullKey(r), r);
+	// CI を REST で読める本数に上限があるので、毎回同じ PR が枠を使い切らないよう、読み始める位置を 1 時間ごとにずらす
+	const all = [...unique.values()];
+	const start =
+		all.length &&
+		(Math.floor(Date.now() / 3_600_000) * CHECKS_FALLBACK_PER_SYNC) %
+			all.length;
+	const refs = [...all.slice(start), ...all.slice(0, start)];
+	const pulls = new Map<string, Awaited<ReturnType<typeof fetchPulls>>[0]>();
+	for (const batch of chunked(refs, PULLS_PER_QUERY)) {
+		try {
+			const fetched = await fetchPulls(gh, batch, budget);
+			for (const [i, ref] of batch.entries()) {
+				pulls.set(pullKey(ref), fetched[i] ?? null);
+			}
+		} catch (e) {
+			if (!(e instanceof GitHubError)) throw e;
+			result.warnings.push(e.message);
+		}
+	}
 	const at = new Date().toISOString();
 	const updates = rows.flatMap((r) => {
 		const pull = pulls.get(pullKey(r));
@@ -196,12 +224,13 @@ const refreshPulls = async (
 
 /**
  * GitHub との同期。印からリンクを付け、成果物の PR の状態を取り込み、条件を満たしたタスクを done にする。
- * GitHub を読めなかった段は警告にして先へ進む（取り込み済みの状態で done の規則を当てる）
+ * GitHub を読めなかった段は警告にして先へ進む（取り込み済みの状態で done の規則を当てる）。
+ * caller は手で同期を呼んだ人で、書き込みはその人の操作として残る。Cron は null を渡し、sync の actor で残る
  */
 export const runSync = async (
 	db: Db,
 	github: GitHub | null,
-	callerId: string | null,
+	caller: Principal | null,
 ): Promise<SyncResult> => {
 	const result: SyncResult = {
 		skipped: false,
@@ -213,10 +242,11 @@ export const runSync = async (
 	if (!github) {
 		return { ...result, skipped: true, warnings: [NO_TOKEN_WARNING] };
 	}
-	const who: Principal = { actorId: SYNC_ACTOR_ID, callerId };
+	const who = caller ?? { actorId: SYNC_ACTOR_ID, callerId: null };
+	const budget = { remaining: CHECKS_FALLBACK_PER_SYNC };
 	for (const step of [linkMarked, refreshPulls]) {
 		try {
-			await step(db, github, who, result);
+			await step(db, github, who, result, budget);
 		} catch (e) {
 			if (!(e instanceof GitHubError)) throw e;
 			result.warnings.push(e.message);

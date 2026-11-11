@@ -62,10 +62,17 @@ export const createApp = (options: Options = {}) => ({
 		ctx: ExecutionContext,
 	): Promise<void> {
 		ctx.waitUntil(
-			runSync(openDb(env.DB), githubOf(env, options), null).then((result) => {
-				const log = result.warnings.length > 0 ? console.warn : console.log;
-				log(JSON.stringify({ message: "sync", ...result }));
-			}),
+			runSync(openDb(env.DB), githubOf(env, options), null)
+				.then((result) => {
+					const log = result.warnings.length > 0 ? console.warn : console.log;
+					log(JSON.stringify({ message: "sync", ...result }));
+				})
+				// 失敗した回を例外で終わらせず、理由をログに残して次の回に任せる
+				.catch((e: unknown) => {
+					console.error(
+						JSON.stringify({ message: "sync failed", error: String(e) }),
+					);
+				}),
 		);
 	},
 });
