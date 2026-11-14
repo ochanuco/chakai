@@ -38,8 +38,8 @@ describe("1 回の同期で GitHub を呼ぶ回数", () => {
 		gh.calls = [];
 		const res = await call(mac, "POST", "/v1/sync");
 		expect(await res.json()).toMatchObject({ synced: 35, warnings: [] });
-		// 印を探す 2 回（12 repo）と、状態を取り込む 2 回（35 本）
-		expect(gh.count("POST /graphql")).toBe(4);
+		// repo の一覧を読む 1 回と、印を探す 2 回（12 repo）と、状態を取り込む 2 回（35 本）
+		expect(gh.count("POST /graphql")).toBe(5);
 		// statusCheckRollup を読めなかった 1 本だけ、workflow run と commit status を読む
 		expect(gh.calls.filter((c) => c.startsWith("GET "))).toEqual([
 			"GET /repos/example/calls-0/actions/runs",

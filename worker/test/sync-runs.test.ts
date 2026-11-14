@@ -195,11 +195,11 @@ describe("ラベルの付け直し", () => {
 		expect(state[1]?.labeled_at).toBeTruthy();
 		expect((await runs())[0]?.warnings).toEqual([]);
 
-		// 付いた後の同期は、開いている 3 番の状態を読むだけ
+		// 付いた後の同期は、repo の一覧と印を探す問い合わせのほかは、開いている 3 番の状態を読むだけ
 		gh.calls = [];
 		await cron();
 		expect(gh.count("POST /repos")).toBe(0);
-		expect(gh.count("POST /graphql")).toBe(2);
+		expect(gh.count("POST /graphql")).toBe(3);
 	});
 
 	it("定義が無くて付かなかったラベルも、定義された後の同期で付く。GitHub で先に付いていれば呼ばない", async () => {

@@ -241,6 +241,29 @@ describe("画面", () => {
 		expect(body).toMatch(/\d{4}-\d{2}-\d{2} \d{2}:\d{2}（たった今）から/);
 	});
 
+	it("タスクの無いプロジェクトは札にせず、畳んだ一覧に名前だけ出す", async () => {
+		const busy = await newProject();
+		const idle = await newProject();
+		await newTask(busy.id);
+		const { body } = await text("/");
+		const [cards, folded = ""] = body.split("<details>");
+		expect(cards).toContain(`<div class="card"><a href="/projects/${busy.id}"`);
+		expect(cards).not.toContain(`href="/projects/${idle.id}"`);
+		expect(folded).toContain(`href="/projects/${idle.id}"`);
+		expect(folded).toContain("タスクの無いプロジェクト");
+	});
+
+	it("設定では、上書きの無いプロジェクトを畳む", async () => {
+		const own = await newProject();
+		const plain = await newProject();
+		expect((await putSetting(own.id, 2)).status).toBe(200);
+		const { body } = await text("/settings");
+		const [open, folded = ""] = body.split("<details>");
+		expect(open).toContain(`data-setting-scope="${own.id}"`);
+		expect(folded).toContain(`data-setting-scope="${plain.id}"`);
+		expect((await putSetting(own.id, null)).status).toBe(200);
+	});
+
 	it("AI が書いた件名や本文を、HTML として解釈させない", async () => {
 		const project = await newProject();
 		const task = await newTask(

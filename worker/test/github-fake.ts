@@ -56,6 +56,13 @@ export class FakeGitHub {
 	garbage = false;
 	/** PR を番号で読む問い合わせが来たときに、答える前に 1 度だけ呼ぶ。同期の途中に他の書き込みを挟むため */
 	beforePulls: (() => Promise<void>) | null = null;
+	/**
+	 * token のアカウントが持つ repo の一覧に出す repo。既定は空で、ほかのテストの同期がプロジェクトを作らないようにする。
+	 * fork は、本物と同じく一覧に出さない
+	 */
+	owned: { repo: string; archived?: boolean; fork?: boolean }[] = [];
+	/** 入れると、repo の一覧の問い合わせにだけこの status を返す */
+	ownedDown: number | null = null;
 	/** 同時に答えを待っていた REST の GET の、最大の数 */
 	maxInFlight = 0;
 	private inFlight = 0;
@@ -114,6 +121,12 @@ export class FakeGitHub {
 		}
 		if (method === "POST" && url.pathname === "/graphql") {
 			const body = JSON.parse(String(init?.body));
+			if (String(body.query).includes("viewer { repositories(")) {
+				if (this.ownedDown !== null) {
+					return Response.json({ message: "down" }, { status: this.ownedDown });
+				}
+				return this.ownedPage(body.variables.after);
+			}
 			if (this.beforePulls && body.variables.k0 !== undefined) {
 				const hook = this.beforePulls;
 				this.beforePulls = null;
@@ -243,6 +256,28 @@ export class FakeGitHub {
 			};
 		}
 		return Response.json(errors.length > 0 ? { data, errors } : { data });
+	}
+
+	private ownedPage(after: unknown) {
+		const all = this.owned.filter((r) => !r.fork);
+		const start = typeof after === "string" ? Number(after) : 0;
+		const nodes = all.slice(start, start + 100);
+		return Response.json({
+			data: {
+				viewer: {
+					repositories: {
+						pageInfo: {
+							hasNextPage: start + 100 < all.length,
+							endCursor: String(start + nodes.length),
+						},
+						nodes: nodes.map((r) => ({
+							nameWithOwner: r.repo,
+							isArchived: r.archived ?? false,
+						})),
+					},
+				},
+			},
+		});
 	}
 
 	private scan(repo: FakeRepo, v: Record<string, unknown>, i: number) {

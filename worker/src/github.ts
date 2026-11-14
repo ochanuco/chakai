@@ -516,6 +516,47 @@ recent: pullRequests(first: 50, after: $ra${i}, orderBy: {field: UPDATED_AT, dir
 	return { scanned, failed: [...failed], causes: [...causes] };
 };
 
+export type OwnedRepo = { repo: string; archived: boolean };
+
+type OwnedList = {
+	pageInfo: { hasNextPage: boolean; endCursor: string | null };
+	nodes: { nameWithOwner: string; isArchived: boolean }[];
+};
+
+type OwnedPage = { viewer: { repositories: OwnedList } | null };
+
+// 読み切れない数の repo を持つことは無いので、上限を超えたら一覧ごと読めなかったことにする
+const MAX_OWNED_PAGES = 10;
+
+/** token のアカウントが持つ repo（fork を除く）。最後まで読めなければ GitHubError */
+export const listOwnedRepos = async (gh: GitHub): Promise<OwnedRepo[]> => {
+	const repos: OwnedRepo[] = [];
+	let after: string | null = null;
+	for (let page = 0; page < MAX_OWNED_PAGES; page++) {
+		const { data }: { data: OwnedPage } = await graphql<OwnedPage>(
+			gh,
+			"query($after: String) { viewer { repositories(first: 100, after: $after, ownerAffiliations: [OWNER], isFork: false) { pageInfo { hasNextPage endCursor } nodes { nameWithOwner isArchived } } } }",
+			{ after },
+		);
+		const list: OwnedList = await reading("GitHub の repo の一覧", () => {
+			const found = data.viewer?.repositories;
+			if (!found || !Array.isArray(found.nodes)) throw new Error();
+			return found;
+		});
+		for (const node of list.nodes) {
+			repos.push({
+				repo: String(node.nameWithOwner),
+				archived: node.isArchived === true,
+			});
+		}
+		if (!list.pageInfo.hasNextPage) return repos;
+		after = list.pageInfo.endCursor;
+	}
+	throw new GitHubError(
+		`GitHub の repo の一覧: ${MAX_OWNED_PAGES * 100} 個を超えたので読み切れなかった`,
+	);
+};
+
 /** ラベルを付ける。この入口は、定義の無いラベルを作ってしまうので、定義があると確かめてから呼ぶ */
 export const addLabel = async (gh: GitHub, ref: PullRef, label: string) => {
 	await request(gh, `/repos/${ref.repo}/issues/${ref.number}/labels`, {

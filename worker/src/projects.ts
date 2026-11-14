@@ -118,6 +118,58 @@ export const linkRepo = async (
 	return ok(toProject(row, await retryOnConflict(link, linked)));
 };
 
+/**
+ * どのプロジェクトにも紐付いていない repo を、repo 名のプロジェクトを作って紐付ける。
+ * 同じ名前で repo の無いプロジェクトがあれば、作らずにそこへ紐付ける
+ */
+export const adoptRepos = async (
+	db: Db,
+	who: Principal,
+	repos: string[],
+): Promise<void> => {
+	const linkedRows = await db.select().from(projectRepos);
+	const linked = new Set(linkedRows.map((r) => r.repo.toLowerCase()));
+	const withRepos = new Set(linkedRows.map((r) => r.projectId));
+	const vacant = new Map<string, typeof projects.$inferSelect>();
+	for (const p of await db.select().from(projects).orderBy(asc(projects.id))) {
+		const key = p.name.toLowerCase();
+		if (!withRepos.has(p.id) && !vacant.has(key)) vacant.set(key, p);
+	}
+	for (const repo of repos) {
+		if (linked.has(repo.toLowerCase())) continue;
+		const name = repo.split("/")[1] ?? repo;
+		const at = new Date().toISOString();
+		const existing = vacant.get(name.toLowerCase());
+		const row = existing ?? {
+			id: newId(),
+			name,
+			description: "",
+			createdBy: who.actorId,
+			createdAt: at,
+		};
+		// プロジェクトは消せないので、作るのと紐付けるのを 1 つの batch にし、repo の無いプロジェクトを残さない
+		await writeAll(db, [
+			...(existing ? [] : [db.insert(projects).values(row)]),
+			db.insert(projectRepos).values({ projectId: row.id, repo }),
+			...eventInserts(db, who, at, [
+				...(existing
+					? []
+					: [
+							{
+								entity: "project" as const,
+								entityId: row.id,
+								field: "created",
+								after: toProject(row, []),
+							},
+						]),
+				{ entity: "project", entityId: row.id, field: "repos", after: repo },
+			]),
+		]);
+		vacant.delete(name.toLowerCase());
+		linked.add(repo.toLowerCase());
+	}
+};
+
 export const projectExists = async (db: Db, id: string) =>
 	(
 		await db
