@@ -26,6 +26,7 @@ import {
 	fetchPulls,
 	type GitHub,
 	GitHubError,
+	listOwnedRepos,
 	PULLS_PER_QUERY,
 	type PullRef,
 	pullKey,
@@ -41,6 +42,7 @@ import {
 	pullUpdate,
 	pullUrl,
 } from "./links.ts";
+import { adoptRepos } from "./projects.ts";
 import { completeDelivered } from "./tasks.ts";
 
 /** Cron の同期が動かした書き込みを残す actor。名簿には migration が無効な行として入れる */
@@ -77,9 +79,12 @@ const linkMarked = async (
 	result: SyncResult,
 	budget: ChecksBudget,
 	labelTried: Set<string>,
+	archived: Set<string>,
 ) => {
 	const startedAt = new Date().toISOString();
-	const rows = await db.select().from(projectRepos);
+	const rows = (await db.select().from(projectRepos)).filter(
+		(r) => !archived.has(r.repo.toLowerCase()),
+	);
 	const scans = new Map<string, (string | null)[]>();
 	const projectsOf = new Map<string, Set<string>>();
 	for (const r of rows) {
@@ -334,7 +339,29 @@ export const runSync = async (
 	const who = caller ?? { actorId: SYNC_ACTOR_ID, callerId: null };
 	const budget = { remaining: CHECKS_FALLBACK_PER_SYNC };
 	const labelTried = new Set<string>();
-	for (const step of [linkMarked, refreshPulls, retryLabels]) {
+	let owned: Awaited<ReturnType<typeof listOwnedRepos>> = [];
+	try {
+		owned = await listOwnedRepos(github);
+	} catch (e) {
+		if (!(e instanceof GitHubError)) throw e;
+		result.warnings.push(e.message);
+	}
+	// 一覧に載ってアーカイブと分かった repo だけ印を探さない。一覧に無い repo（ほかの owner のもの）は今まで通り見る
+	const archived = new Set(
+		owned.filter((r) => r.archived).map((r) => r.repo.toLowerCase()),
+	);
+	// project_repos は repo で一意でないので、手動の同期が Cron と重なると同じ repo のプロジェクトが 2 つできる。
+	// プロジェクトは消せないので、作るのは Cron だけにする
+	if (!caller) {
+		await adoptRepos(
+			db,
+			who,
+			owned.filter((r) => !r.archived).map((r) => r.repo),
+		);
+	}
+	const linkUnarchived: typeof retryLabels = (...args) =>
+		linkMarked(...args, archived);
+	for (const step of [linkUnarchived, refreshPulls, retryLabels]) {
 		try {
 			await step(db, github, who, result, budget, labelTried);
 		} catch (e) {

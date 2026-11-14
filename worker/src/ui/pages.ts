@@ -2,7 +2,11 @@ import { TASK_STATES, type TaskState } from "../db/schema.ts";
 import type { TaskEvent } from "../history.ts";
 import type { Link } from "../links.ts";
 import type { Actor, Label } from "../roster.ts";
-import type { SettingSource, Settings } from "../settings.ts";
+import {
+	SETTING_KEYS,
+	type SettingSource,
+	type Settings,
+} from "../settings.ts";
 import { SYNC_ACTOR_ID, type SyncRun } from "../sync.ts";
 import type {
 	ProjectRow,
@@ -259,6 +263,9 @@ export const renderHome = (
 	nav: Nav,
 ): string => {
 	const projectById = new Map(view.projects.map((p) => [p.id, p]));
+	// repo ごとにプロジェクトが自動でできるので、タスクの無いものまで札にすると一覧が埋まる
+	const busy = view.projects.filter((p) => view.counts.has(p.id));
+	const idle = view.projects.filter((p) => !view.counts.has(p.id));
 	return page(
 		"owner の番",
 		html`<h1>owner の番 <span class="muted">review ${view.reviews.length} 件</span></h1>
@@ -278,14 +285,19 @@ ${
 ${
 	view.projects.length === 0
 		? html`<p class="muted">プロジェクトはまだ無い。</p>`
-		: view.projects.map((p) => {
+		: html`${busy.map((p) => {
 				const counts = view.counts.get(p.id) ?? {};
 				return html`<div class="card"><a href="/projects/${p.id}"><strong>${p.name}</strong></a>
 <div class="chips">${TASK_STATES.filter((s) => counts[s]).map(
 					(s) =>
 						html`<a class="state s-${s}" href="/projects/${p.id}?state=${s}">${s} ${counts[s]}</a>`,
-				)}${Object.keys(counts).length === 0 ? html`<span class="muted">タスクなし</span>` : ""}</div></div>`;
-			})
+				)}</div></div>`;
+			})}${
+				idle.length === 0
+					? ""
+					: html`<details><summary class="muted">タスクの無いプロジェクト ${idle.length}</summary>
+<p>${idle.map((p, i) => html`${i > 0 ? "、" : ""}<a href="/projects/${p.id}">${p.name}</a>`)}</p></details>`
+			}`
 }`,
 		nav,
 	);
@@ -342,8 +354,18 @@ const settingForm = (settings: Settings, own: SettingSource, reset: string) => {
 </form>`;
 };
 
-export const renderSettings = (view: SettingsView, nav: Nav): string =>
-	page(
+const projectSetting = ({
+	project,
+	settings,
+}: SettingsView["projects"][number]) =>
+	html`<div class="card"><div><a href="/projects/${project.id}"><strong>${project.name}</strong></a></div>${settingForm(settings, "project", "上書きを消す")}</div>`;
+
+export const renderSettings = (view: SettingsView, nav: Nav): string => {
+	const isOverridden = (s: SettingsView["projects"][number]) =>
+		SETTING_KEYS.some((k) => s.settings.settings[k].source === "project");
+	const overridden = view.projects.filter(isOverridden);
+	const plain = view.projects.filter((s) => !isOverridden(s));
+	return page(
 		"設定",
 		html`<h1>設定</h1>
 <h2>自分で作る todo の深さの上限 <span class="muted">${DEPTH_KEY}</span></h2>
@@ -354,13 +376,15 @@ export const renderSettings = (view: SettingsView, nav: Nav): string =>
 ${
 	view.projects.length === 0
 		? html`<p class="muted">プロジェクトはまだ無い。</p>`
-		: view.projects.map(
-				({ project, settings }) =>
-					html`<div class="card"><div><a href="/projects/${project.id}"><strong>${project.name}</strong></a></div>${settingForm(settings, "project", "上書きを消す")}</div>`,
-			)
+		: html`${overridden.map(projectSetting)}${
+				plain.length === 0
+					? ""
+					: html`<details><summary class="muted">上書きの無いプロジェクト ${plain.length}</summary>${plain.map(projectSetting)}</details>`
+			}`
 }`,
 		nav,
 	);
+};
 
 export const renderSync = (
 	runs: SyncRun[],

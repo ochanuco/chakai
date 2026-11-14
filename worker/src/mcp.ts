@@ -387,7 +387,7 @@ export const TOOLS: {
 		name: "sync",
 		title: "GitHub と同期する",
 		description:
-			"1 時間ごとの同期を、今すぐ動かす。PR の本文の印からリンクを付け、成果物の PR の状態を取り込み、条件を満たしたタスクを done にする。",
+			"1 時間ごとの同期を、今すぐ動かす。PR の本文の印からリンクを付け、成果物の PR の状態を取り込み、条件を満たしたタスクを done にする。repo からプロジェクトを作るのは 1 時間ごとの同期だけ。",
 		inputSchema: {
 			type: "object",
 			properties: {},
