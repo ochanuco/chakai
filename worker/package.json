@@ -17,7 +17,7 @@
 	},
 	"dependencies": {
 		"drizzle-orm": "^0.45.4",
-		"fractional-indexing": "^3.2.0",
+		"fractional-indexing": "^4.0.0",
 		"jose": "^6.2.12",
 		"uuidv7": "^1.0.2",
 		"valibot": "^1.5.0"
