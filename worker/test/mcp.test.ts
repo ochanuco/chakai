@@ -69,6 +69,8 @@ describe("POST /mcp", () => {
 		const text = res.result?.instructions as string;
 		for (const part of [
 			"誰として記録されるかは呼び出し元で決まる",
+			"会話が終わっても残るものだけ",
+			"渡されたタスクの作業は、そのタスクに記録する",
 			"似たタスクが無いかを確かめる",
 			"state は渡さず backlog にする",
 			"範囲の外の課題",

@@ -92,7 +92,7 @@ actor の ID は名簿の名前（`owner`、`yukarin` など）で、それ以�
 
 ## MCP
 
-`POST /mcp` で受ける。道具は `list_projects`、`create_project`、`link_repo`、`search_tasks`、`get_task`、`create_task`、`update_task`、`relate_tasks`、`add_link`、`remove_link`、`sync`、`next_task`、`start_run`、`end_run`。使い方（起票の手順、状態を動かす時点、途中で分けるときの扱い、PR と資料の付け方、探し方）は、`initialize` が返す `instructions` に書いてある。`next_task`、`start_run`、`end_run` は、席を回す側のコードが呼ぶ。仕分けと設定の変更は owner の操作なので、道具には出さない。
+`POST /mcp` で受ける。道具は `list_projects`、`create_project`、`link_repo`、`search_tasks`、`get_task`、`create_task`、`update_task`、`relate_tasks`、`add_link`、`remove_link`、`sync`、`next_task`、`start_run`、`end_run`。使い方（起票するものと手順、状態を動かす時点、途中で分けるときの扱い、PR と資料の付け方、探し方）は、`initialize` が返す `instructions` に書いてある。`next_task`、`start_run`、`end_run` は、席を回す側のコードが呼ぶ。仕分けと設定の変更は owner の操作なので、道具には出さない。
 
 ## Web UI
 
