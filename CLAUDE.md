@@ -20,5 +20,5 @@ chakai は owner と複数の AI を区別するタスク台帳。`worker/` が 
 - ID は UUID v7（`newId()`）。actor の ID だけは名簿の名前
 - D1 は Drizzle。テーブルの migration は `drizzle-kit generate` で作り、手書きしない（trigger は `--custom`）
 - `order_key` はバイト順で比べる。SQL の `ORDER BY` と JS の `<` を使い、`localeCompare` は使わない
-- Worker のデプロイは `deploy` workflow の手動実行で行う。`wrangler deploy` の手打ちはしない
+- Worker のデプロイは main への push で `deploy` workflow が行う。`wrangler deploy` の手打ちはしない
 - コメントは日本語で、コードから読み取れない理由だけを書く

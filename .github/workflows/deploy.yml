@@ -1,8 +1,18 @@
 name: deploy
-run-name: deploy chakai @ ${{ inputs.ref }}
+run-name: deploy chakai @ ${{ inputs.ref || github.sha }}
 
-# 手動でだけ本番に出す。Environment production の承認の後に出る
+# main への push で本番に出す。承認は deploy-plan が危ないと判定したとき（前回の記録なし・ロールバック・
+# 追加系でない D1 migration）だけ、Environment production-approval で止まる。手動実行はロールバック用
 on:
+  push:
+    branches: [main]
+    paths:
+      - worker/**
+      - package.json
+      - pnpm-lock.yaml
+      - pnpm-workspace.yaml
+      - .github/deploy/production.env.op
+      - .github/workflows/deploy.yml
   workflow_dispatch:
     inputs:
       ref:
@@ -19,10 +29,21 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  plan:
+    uses: ochanuco/.github/.github/workflows/deploy-plan.yml@336944e6c5548c749312671795a28803c5d975da # v1.6.0
+    permissions:
+      contents: read
+      actions: read
+    with:
+      ref: ${{ inputs.ref || 'main' }}
+      approval-environment: production-approval
+      migrations: worker/migrations/
   deploy:
+    needs: plan
     uses: ochanuco/.github/.github/workflows/deploy.yml@336944e6c5548c749312671795a28803c5d975da # v1.6.0
     with:
-      ref: ${{ inputs.ref }}
+      ref: ${{ needs.plan.outputs.sha }}
+      approval-environment: ${{ needs.plan.outputs.approval-environment }}
       op-env-file: .github/deploy/production.env.op
       run: worker/scripts/deploy.sh production
     secrets: inherit
