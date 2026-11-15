@@ -163,7 +163,7 @@ pnpm run roster:add-caller --remote
 
 ## デプロイ
 
-`deploy` workflow を手動（`workflow_dispatch`）で実行する。Environment `production` の承認の後に、`worker/scripts/deploy.sh` が未適用の D1 migration を当ててから `wrangler deploy` する。migration の前後で `worker/scripts/d1-guard.mjs` がテーブルの行数を比べ、行が減ったテーブルか、行が入ったまま消えたテーブルがあれば、Worker を出さずに止める。意図した削除や改名は、migration に `-- deploy: allow-row-loss <table>` と書いて宣言する。ロールバックは、main 上のコミット SHA を指定して実行する。
+main への push（`worker/` などが変わったとき）で `deploy` workflow が動く。`deploy-plan` が、前回の記録が無いとき、ロールバックのとき、追加系（`CREATE TABLE`・`CREATE INDEX`・`ADD COLUMN`）でない文を含む migration か既存の migration の書き換えがあるときだけ、Environment `production-approval` の承認で止める。`worker/scripts/deploy.sh` が未適用の D1 migration を当ててから `wrangler deploy` する。migration の前後で `worker/scripts/d1-guard.mjs` がテーブルの行数を比べ、行が減ったテーブルか、行が入ったまま消えたテーブルがあれば、Worker を出さずに止める。意図した削除や改名は、migration に `-- deploy: allow-row-loss <table>` と書いて宣言する。ロールバックは、main 上のコミット SHA を指定して `workflow_dispatch` で実行する。
 
 認証情報は Environment `production` の secret `OP_SA_DEPLOY` から 1Password の `gh-deploy/cloudflare-workers` を読む（`.github/deploy/production.env.op`）。
 
