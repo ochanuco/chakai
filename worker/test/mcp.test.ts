@@ -248,6 +248,22 @@ describe("道具", () => {
 		}
 	});
 
+	it("update_task の note を、変えた項目の後に履歴に残す", async () => {
+		const project = await newProject();
+		const task = await newTask(project.id);
+		const res = await tool<TaskJson>(
+			"update_task",
+			{ task_id: task.id, state: "dropped", note: "別の方針にした" },
+			working("yukarin"),
+		);
+		expect(res.isError).toBeFalsy();
+		const events = (await eventsOf(task.id)).slice(1);
+		expect(events.map((e) => [e.field, e.after, e.actor_id])).toEqual([
+			["state", '"dropped"', "yukarin"],
+			["note", '"別の方針にした"', "yukarin"],
+		]);
+	});
+
 	it("REST が拒んだ操作は isError で返す", async () => {
 		const project = await newProject();
 		const task = await newTask(project.id);
