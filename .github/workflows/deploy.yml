@@ -30,7 +30,7 @@ concurrency:
 
 jobs:
   plan:
-    uses: ochanuco/.github/.github/workflows/deploy-plan.yml@336944e6c5548c749312671795a28803c5d975da # v1.6.0
+    uses: ochanuco/.github/.github/workflows/deploy-plan.yml@194995de7425c6457f8d802510787afd02ed9235 # v1.7.0
     permissions:
       contents: read
       actions: read
@@ -40,7 +40,7 @@ jobs:
       migrations: worker/migrations/
   deploy:
     needs: plan
-    uses: ochanuco/.github/.github/workflows/deploy.yml@336944e6c5548c749312671795a28803c5d975da # v1.6.0
+    uses: ochanuco/.github/.github/workflows/deploy.yml@194995de7425c6457f8d802510787afd02ed9235 # v1.7.0
     with:
       ref: ${{ needs.plan.outputs.sha }}
       approval-environment: ${{ needs.plan.outputs.approval-environment }}
