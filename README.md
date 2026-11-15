@@ -32,6 +32,7 @@ actor の ID は名簿の名前（`owner`、`yukarin` など）で、それ以�
 - タスクは消さない。やめたものは `dropped` にする。
 - `order_key` はプロジェクト内の並びを表す fractional index。起票すると末尾に入り、更新の `order` で他のタスクの直前・直後に動かす。
 - 書き込みはすべて `events` に追記する（`actor_id`、`caller_id`、`field`、`before`、`after`）。`events` は更新も削除もできない。
+- 更新に `note` を添えると、変えた項目の後に `field` が `note` の行で残る。`note` だけの更新はタスクを変えず（`revision` も進めず）、その行だけを残す。
 - 子が `done` か `dropped` になり、同じ親の子がすべて `done` か `dropped` になったら、`todo` か `doing` の親を `review` にする（`waiting_on` は「子タスクがすべて片付いた」）。履歴には、きっかけになった操作の actor と呼び出し元で残す。親は自動では `done` にしない。
 - agent が親の下に `todo` でタスクを作るとき、作るタスクから上へ agent が作ったタスクが続く数（作るタスク自身を含む）が `max_self_todo_depth` を超えると拒む。人が作ったタスクと、席に渡したことのあるタスク（`runs` に行がある）で数え直す。`backlog` で作るのは通すが、agent がそれを `todo` に上げるときにも同じ上限が掛かる。
 - 仕分け待ちは、agent が起票した `backlog` で `triaged_at` が空のタスク。owner が状態を変えるか、`backlog` に残すと決めると `triaged_at` が入る。
@@ -65,7 +66,7 @@ actor の ID は名簿の名前（`owner`、`yukarin` など）で、それ以�
 | `GET /v1/tasks`                | タスクを探す（`project_id`、`q`、`state`（カンマ区切り）、`assignee_id`、`parent_id`、`label`、`awaiting_triage`、`limit`、`cursor`）                                   |
 | `POST /v1/tasks`               | 起票する（`project_id`、`title`、`body`、`parent_id`、`state`、`assignee_id`、`labels`、`discovered_from`）                                                             |
 | `GET /v1/tasks/:id`            | タスクを、関係（`relations`）とリンク（`links`。成果物の PR は `github` に取り込んだ状態を持つ）と一緒に読む                                                            |
-| `PATCH /v1/tasks/:id`          | 更新する（`title`、`body`、`state`、`waiting_on`、`assignee_id`、`labels`、`order`）                                                                                    |
+| `PATCH /v1/tasks/:id`          | 更新する（`title`、`body`、`state`、`waiting_on`、`assignee_id`、`labels`、`order`、`note`）                                                                            |
 | `GET /v1/tasks/:id/next`       | 親の子孫のうち、木の順（深さ優先、同じ親の中は `order_key` の順）で最初の `todo` を `task` に返す。無ければ `null`。`descendant_states` は子孫の状態ごとの数            |
 | `POST /v1/tasks/:id/relations` | `:id` のタスクから関係を付ける（`kind`、`to_task`、`run_id`）。`run_id` は `discovered_from` にだけ付けられ、`to_task` かその祖先を回した run に限る                    |
 | `POST /v1/tasks/:id/triage`    | 仕分け待ちのタスクを `backlog` のまま仕分け済みにする。owner だけ                                                                                                       |
@@ -102,12 +103,12 @@ owner が Access にログインして `https://chakai.chanu.co/` を開く。se
 | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `/`             | owner の番（`review` のタスクを、プロジェクトをまたいで待たせている順に）と、プロジェクトの一覧。タスクの無いプロジェクトは畳む                        |
 | `/projects/:id` | プロジェクトの参考リンクと、タスクの親子ツリー。`?state=` で絞る（無ければ `done` と `dropped` を除き、`all` ですべて）                                |
-| `/tasks/:id`    | 本文、子タスク、成果物の PR（状態・レビュー・CI・最後に同期した時刻）、参考リンク、関係、実行記録、状態・担当・ラベルの変更、履歴                      |
+| `/tasks/:id`    | 本文、子タスク、成果物の PR（状態・レビュー・CI・最後に同期した時刻）、参考リンク、関係、実行記録、状態・担当・ラベルの変更と一言、履歴                |
 | `/triage`       | 仕分け待ち（プロジェクトをまたいで、起票の古い順に）。`todo` に上げる、`dropped` にする、`backlog` に残す、のどれかを選ぶ                              |
 | `/sync`         | 同期の結果を新しい順に。警告はその回の下に出す                                                                                                         |
 | `/settings`     | `max_self_todo_depth` の、全体の値とプロジェクトごとの上書き。効いている値と出どころ（既定・全体・プロジェクト）を出す。上書きの無いプロジェクトは畳む |
 
-状態は一覧の各行でも変えられ、並びは行の ↑ と ↓ で、同じ親の隣のタスクと入れ替える。仕分け待ちの件数は、どの画面のナビゲーションにも出る。直近の同期に警告があれば、その数もナビゲーションの「同期」に出る。起票と、件名・本文の編集、リンクの追加と削除は画面に無い。
+子を持つタスクには、子孫の末端タスクのうち `done` の数と、`dropped` の枝を除いた数を、件数と進捗バーで出す（ツリーは絞り込みで隠れた子孫も数える）。状態は一覧の各行でも変えられ、並びは行の ↑ と ↓ で、同じ親の隣のタスクと入れ替える。仕分け待ちの件数は、どの画面のナビゲーションにも出る。直近の同期に警告があれば、その数もナビゲーションの「同期」に出る。起票と、件名・本文の編集、リンクの追加と削除は画面に無い。
 
 ## 開発
 

@@ -354,6 +354,22 @@ describe("画面", () => {
 		expect(body.match(/class="title"/g)).toHaveLength(120);
 	});
 
+	it("子を持つタスクに、子孫の末端の進み具合をバーで出す", async () => {
+		const project = await newProject();
+		const parent = await newTask(project.id, { title: "進む親" });
+		const done = await newTask(project.id, { parent_id: parent.id });
+		await newTask(project.id, { parent_id: parent.id });
+		const dropped = await newTask(project.id, { parent_id: parent.id });
+		await patch(done.id, { state: "done" });
+		await patch(dropped.id, { state: "dropped" });
+
+		const bar =
+			'<progress value="1" max="2"></progress><span class="who">1 / 2</span>';
+		expect((await text(`/projects/${project.id}`)).body).toContain(bar);
+		expect((await text(`/tasks/${parent.id}`)).body).toContain(bar);
+		expect((await text(`/tasks/${done.id}`)).body).not.toContain("<progress");
+	});
+
 	it("タスクの画面に、本文・親子・変更の欄・履歴を出す", async () => {
 		const project = await newProject();
 		const parent = await newTask(project.id, { title: "親の件名" });
@@ -368,7 +384,11 @@ describe("画面", () => {
 		);
 		await newTask(project.id, { title: "孫の件名", parent_id: task.id });
 		await patch(task.id, { assignee_id: "akarin", labels: ["infra"] }, mac);
-		await patch(task.id, { state: "review", waiting_on: "進めてよいか" });
+		await patch(task.id, {
+			state: "review",
+			waiting_on: "進めてよいか",
+			note: "<b>方針</b>を決めた",
+		});
 		await patch(task.id, { order: { before: parent.id } });
 
 		const { status, body } = await text(`/tasks/${task.id}`);
@@ -389,6 +409,9 @@ describe("画面", () => {
 		expect(history).toContain("Owner・mac-agent・");
 		expect(history).toContain("Owner・ブラウザ・");
 		expect(history).toContain("並びを変更");
+		expect(history).toContain(
+			'<span class="note">&lt;b&gt;方針&lt;/b&gt;を決めた</span>',
+		);
 		expect(history).toContain("Akarin");
 		// 新しいものを上に出す
 		expect(history.indexOf("並びを変更")).toBeLessThan(history.indexOf("起票"));

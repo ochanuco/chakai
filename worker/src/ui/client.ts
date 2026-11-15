@@ -151,6 +151,8 @@ export const CLIENT_JS = `"use strict";
 			) {
 				body.waiting_on = waitingOn.value.trim();
 			}
+			const note = form.elements.namedItem("note").value.trim();
+			if (note) body.note = note;
 			if (Object.keys(body).length === 0) {
 				showError("変えた欄が無い");
 				return;

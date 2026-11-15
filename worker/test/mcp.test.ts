@@ -71,13 +71,15 @@ describe("POST /mcp", () => {
 			"誰として記録されるかは呼び出し元で決まる",
 			"会話が終わっても残るものだけ",
 			"渡されたタスクの作業は、そのタスクに記録する",
-			"似たタスクが無いかを確かめる",
+			"似たタスクがあれば、作らずにそれを示す",
 			"state は渡さず backlog にする",
 			"範囲の外の課題",
 			"着手する: doing",
+			"done（note に決めたこと）",
+			"dropped（note にやめた理由）",
 			'state: ["todo"]',
 			"labels は渡した一覧に置き換わる",
-			"get_task で今のラベルを読み",
+			"get_task で今のラベルを読んでから足す",
 			"子を todo で作る",
 			"follows を付けてから",
 			"replaced_by を付けてから",
@@ -244,6 +246,22 @@ describe("道具", () => {
 		for (const e of events) {
 			expect(e).toMatchObject({ actor_id: "yukarin", caller_id: WORKING.id });
 		}
+	});
+
+	it("update_task の note を、変えた項目の後に履歴に残す", async () => {
+		const project = await newProject();
+		const task = await newTask(project.id);
+		const res = await tool<TaskJson>(
+			"update_task",
+			{ task_id: task.id, state: "dropped", note: "別の方針にした" },
+			working("yukarin"),
+		);
+		expect(res.isError).toBeFalsy();
+		const events = (await eventsOf(task.id)).slice(1);
+		expect(events.map((e) => [e.field, e.after, e.actor_id])).toEqual([
+			["state", '"dropped"', "yukarin"],
+			["note", '"別の方針にした"', "yukarin"],
+		]);
 	});
 
 	it("REST が拒んだ操作は isError で返す", async () => {

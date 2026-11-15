@@ -13,10 +13,11 @@ import {
 } from "../db/schema.ts";
 import { chunked, reviewSince } from "../history.ts";
 import { type Link, linksOf } from "../links.ts";
+import { type Progress, progressOf } from "../progress.ts";
 import { relationsOf } from "../relations.ts";
 import { listRuns, type Run } from "../runs.ts";
 import { type Settings, settingsOfScopes } from "../settings.ts";
-import { awaitingTriage } from "../tasks.ts";
+import { awaitingTriage, descendantsOf } from "../tasks.ts";
 
 export type TaskRow = typeof tasks.$inferSelect & { labels: string[] };
 export type ProjectRow = typeof projects.$inferSelect;
@@ -210,6 +211,8 @@ export type TaskView = {
 	relations: RelatedTask[];
 	runs: Run[];
 	links: Link[];
+	/** このタスクと子のうち、子を持つものの進み具合 */
+	progress: Map<string, Progress>;
 };
 
 export type RelatedTask = {
@@ -300,10 +303,11 @@ export const loadTask = async (
 		await labelPairs(db, [row.id, ...childRows.map((c) => c.id)]),
 	);
 	if (!task) return null;
-	const [relations, ran, linked] = await Promise.all([
+	const [relations, ran, linked, descendants] = await Promise.all([
 		loadRelations(db, taskId),
 		listRuns(db, taskId),
 		linksOf(db, "task", [taskId]),
+		descendantsOf(db, taskId),
 	]);
 	return {
 		task,
@@ -313,6 +317,14 @@ export const loadTask = async (
 		relations,
 		runs: ran.ok ? ran.value : [],
 		links: linked.get(taskId) ?? [],
+		progress: progressOf([
+			{ id: row.id, parentId: null, state: row.state },
+			...descendants.map((d) => ({
+				id: d.id,
+				parentId: d.parent_id,
+				state: d.state,
+			})),
+		]),
 		reviewSince:
 			row.state === "review"
 				? ((await reviewSince(db, [row.id])).get(row.id) ?? null)

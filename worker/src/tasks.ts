@@ -398,6 +398,8 @@ export type UpdateTaskInput = {
 	state?: TaskState;
 	waiting_on?: string | null;
 	assignee_id?: string | null;
+	/** 更新に添える一言。何を決めたか、なぜその状態にしたかを履歴に残す */
+	note?: string;
 	labels?: string[];
 	order?: { before: string } | { after: string };
 };
@@ -694,7 +696,20 @@ export const updateTask = async (
 				after: nextLabels,
 			});
 		}
+		if (input.note !== undefined) {
+			changes.push({
+				entity: "task",
+				entityId: id,
+				field: "note",
+				after: input.note,
+			});
+		}
 		if (changes.length === 0) return ok(toTask(current, currentLabels));
+		// 一言だけの更新はタスクの行を書かない。revision を進めると、並行する更新を無駄に読み直させる
+		if (changes.every((c) => c.field === "note")) {
+			await writeAll(db, eventInserts(db, who, now, changes));
+			return ok(toTask(current, currentLabels));
+		}
 
 		const next: TaskRow = {
 			...current,
@@ -772,6 +787,21 @@ export const triageTask = async (
 	}, busy);
 };
 
+/** 親の子孫（親自身は含まない）を、木の形を組める最小限の列で返す */
+export const descendantsOf = (db: Db, parentId: string) =>
+	db.all<{
+		id: string;
+		parent_id: string;
+		state: TaskState;
+		order_key: string;
+	}>(sql`
+		WITH RECURSIVE d(id) AS (
+			SELECT id FROM tasks WHERE parent_id = ${parentId}
+			UNION ALL
+			SELECT t.id FROM tasks t JOIN d ON t.parent_id = d.id
+		)
+		SELECT t.id, t.parent_id, t.state, t.order_key FROM tasks t JOIN d ON d.id = t.id`);
+
 export type NextTask = {
 	task: Task | null;
 	descendant_states: Record<TaskState, number>;
@@ -788,18 +818,7 @@ export const nextTask = async (
 	if (!(await findRow(db, parentId))) {
 		return fail(404, "task_not_found", "タスクが無い");
 	}
-	const rows = await db.all<{
-		id: string;
-		parent_id: string;
-		state: TaskState;
-		order_key: string;
-	}>(sql`
-		WITH RECURSIVE d(id) AS (
-			SELECT id FROM tasks WHERE parent_id = ${parentId}
-			UNION ALL
-			SELECT t.id FROM tasks t JOIN d ON t.parent_id = d.id
-		)
-		SELECT t.id, t.parent_id, t.state, t.order_key FROM tasks t JOIN d ON d.id = t.id`);
+	const rows = await descendantsOf(db, parentId);
 
 	const counts = Object.fromEntries(TASK_STATES.map((s) => [s, 0])) as Record<
 		TaskState,
