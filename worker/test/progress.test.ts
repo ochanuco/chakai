@@ -34,6 +34,16 @@ describe("progressOf", () => {
 		expect(map.get("root")).toEqual({ done: 1, total: 1 });
 	});
 
+	it("子がすべて dropped のタスクは、末端として数える", () => {
+		const map = progressOf([
+			t("root", null, "doing"),
+			t("a", "root", "done"),
+			t("a1", "a", "dropped"),
+			t("b", "root", "todo"),
+		]);
+		expect(map.get("root")).toEqual({ done: 1, total: 2 });
+	});
+
 	it("渡されていない親は無視し、親が自分に戻る輪でも止まる", () => {
 		const map = progressOf([t("a", "b", "done"), t("b", "a", "todo")]);
 		expect(map.get("a")).toBeDefined();

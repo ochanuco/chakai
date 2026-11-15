@@ -5,7 +5,7 @@ type Node = { id: string; parentId: string | null; state: string };
 /**
  * 子を持つタスクごとに、子孫の末端タスクのうち done の数と、数える末端の数を返す。
  * 中間のタスクは子が片付くまで done にならず二重に数えてしまうので、末端だけを数える。
- * dropped の枝は、やめた作業なので分母からも外す
+ * dropped の枝は、やめた作業なので分母からも外す。子がすべて dropped のタスクは末端として数える
  */
 export const progressOf = (nodes: Node[]): Map<string, Progress> => {
 	const children = new Map<string, Node[]>();
@@ -24,8 +24,9 @@ export const progressOf = (nodes: Node[]): Map<string, Progress> => {
 		visiting.add(id);
 		for (const child of children.get(id) ?? []) {
 			if (child.state === "dropped") continue;
-			if (children.has(child.id)) {
-				const below = leavesUnder(child.id);
+			const below = leavesUnder(child.id);
+			// 子がすべて dropped なら、自分が末端として残る
+			if (below.total > 0) {
 				sum.done += below.done;
 				sum.total += below.total;
 			} else {
