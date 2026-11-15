@@ -99,6 +99,7 @@ const TaskPatch = v.strictObject({
 	waiting_on: v.optional(v.nullable(Text(1000))),
 	assignee_id: v.optional(v.nullable(Id)),
 	labels: v.optional(v.pipe(v.array(LabelName), v.maxLength(20))),
+	note: v.optional(Text(2000)),
 	order: v.optional(
 		v.union([v.strictObject({ before: Id }), v.strictObject({ after: Id })]),
 	),

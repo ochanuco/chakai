@@ -17,8 +17,8 @@ export const INSTRUCTIONS = `chakai は owner と複数の AI を区別するタ
 会話が終わっても残るものだけ: 後でやること、セッションをまたぐ作業、owner の判断待ち。その場で終える作業は起票せず、PR を記録にする。渡されたタスクの作業は、そのタスクに記録する。
 
 ## 起票する
-1. list_projects でプロジェクトを決める。合うものが無ければ、owner に確かめてから create_project で作る。
-2. search_tasks を q 付きで呼び、似たタスクが無いかを確かめる。似たものがあれば、作らずにそれを示す。
+1. list_projects でプロジェクトを決める。無ければ owner に確かめて create_project で作る。
+2. search_tasks を q 付きで呼び、似たタスクがあれば、作らずにそれを示す。
 3. create_task で作る。state は渡さず backlog にする。owner が「すぐやる」と言ったものだけ todo にする。
 4. title は、それだけで何をするかが分かる 1 文にする。body には、起きていること、終わったと言える条件、関係するファイルや URL を書く。会話の経緯は書かない。
 
@@ -28,8 +28,8 @@ export const INSTRUCTIONS = `chakai は owner と複数の AI を区別するタ
 update_task の state を、その時点で変える。
 - 着手する: doing
 - owner の判断が要る: review（waiting_on に仰ぐ内容を一言で）
-- 終わった: done
-- やめた: dropped
+- 終わった: done（note に決めたこと）
+- やめた: dropped（note にやめた理由）
 - backlog を todo に上げるのは、owner が着手を認めたときだけ。
 
 ## 途中で分ける
@@ -47,7 +47,7 @@ update_task の state を、その時点で変える。
 - 並びを変える: update_task の order。
 
 ## 書き方
-- labels は渡した一覧に置き換わる。足すときは、get_task で今のラベルを読み、足した一覧を渡す。
+- labels は渡した一覧に置き換わる。足すときは、get_task で今のラベルを読んでから足す。
 - タスクや actor の ID を、owner への報告にそのまま並べない。件名で示す。`;
 
 const Message = v.object({
@@ -272,7 +272,7 @@ export const TOOLS: {
 		name: "update_task",
 		title: "タスクを更新する",
 		description:
-			"タスクの件名、本文、状態、並び、ラベル、担当、waiting_on を変える。渡した項目だけが変わる。review（owner の番）にするときは waiting_on が要り、review を出ると waiting_on は空になる。",
+			"タスクの件名、本文、状態、並び、ラベル、担当、waiting_on を変える。渡した項目だけが変わる。note は変えた内容と一緒に履歴に残り、note だけを渡せばタスクを変えずに一言を残す。review（owner の番）にするときは waiting_on が要り、review を出ると waiting_on は空になる。",
 		inputSchema: {
 			type: "object",
 			properties: {
@@ -283,6 +283,13 @@ export const TOOLS: {
 				waiting_on: { type: ["string", "null"], maxLength: 1000 },
 				assignee_id: { type: ["string", "null"], maxLength: 64 },
 				labels,
+				note: {
+					type: "string",
+					minLength: 1,
+					maxLength: 2000,
+					description:
+						"更新に添えて履歴に残す一言。何を決めたか、なぜその状態にしたか",
+				},
 				order: {
 					type: "object",
 					description:

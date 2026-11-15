@@ -398,6 +398,8 @@ export type UpdateTaskInput = {
 	state?: TaskState;
 	waiting_on?: string | null;
 	assignee_id?: string | null;
+	/** 更新に添える一言。何を決めたか、なぜその状態にしたかを履歴に残す */
+	note?: string;
 	labels?: string[];
 	order?: { before: string } | { after: string };
 };
@@ -694,7 +696,20 @@ export const updateTask = async (
 				after: nextLabels,
 			});
 		}
+		if (input.note !== undefined) {
+			changes.push({
+				entity: "task",
+				entityId: id,
+				field: "note",
+				after: input.note,
+			});
+		}
 		if (changes.length === 0) return ok(toTask(current, currentLabels));
+		// 一言だけの更新はタスクの行を書かない。revision を進めると、並行する更新を無駄に読み直させる
+		if (changes.every((c) => c.field === "note")) {
+			await writeAll(db, eventInserts(db, who, now, changes));
+			return ok(toTask(current, currentLabels));
+		}
 
 		const next: TaskRow = {
 			...current,

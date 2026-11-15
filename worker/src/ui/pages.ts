@@ -92,6 +92,7 @@ ol.history li{padding:8px 0;border-bottom:1px solid var(--line)}
 ol.history .when{color:var(--muted);font-size:.85rem}
 ol.history details pre{white-space:pre-wrap;margin:4px 0;padding:8px;background:var(--bg);border:1px solid var(--line);border-radius:6px;font:inherit;font-size:.875rem}
 .arrow{color:var(--muted);margin:0 4px}
+ol.history .note{white-space:pre-wrap}
 `;
 
 const JST_MS = 9 * 3_600_000;
@@ -543,6 +544,8 @@ const change = (event: TaskEvent, names: Names): Markup => {
 			const role = link?.role === "deliverable" ? "成果物の PR" : "参考リンク";
 			return html`${role}を${after ? "付けた" : "消した"}${typeof link?.url === "string" ? html`（${link.url}）` : ""}`;
 		}
+		case "note":
+			return html`<span class="note">${plain(after)}</span>`;
 		case "state":
 			return fromTo((v) => (isState(v) ? badge(v) : plain(v)));
 		case "assignee_id":
@@ -646,6 +649,7 @@ ${
 				html`<label><input type="checkbox" name="label" value="${l.name}"${task.labels.includes(l.name) ? html` checked` : ""}> ${l.name}</label>`,
 		)}</div></div>
 <div class="field"><label for="f-new-labels">新しいラベル（カンマで区切る）</label><input id="f-new-labels" type="text" name="new_labels" autocomplete="off"></div>
+<div class="field"><label for="f-note">一言（履歴に残す）</label><textarea id="f-note" name="note" rows="2" maxlength="2000"></textarea></div>
 <button type="submit">保存</button>
 </form>
 <h2>履歴</h2>

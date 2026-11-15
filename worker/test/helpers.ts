@@ -135,6 +135,7 @@ export type TaskJson = {
 	order_key: string;
 	waiting_on: string | null;
 	created_by: string;
+	updated_at: string;
 	triaged_at: string | null;
 	labels: string[];
 };

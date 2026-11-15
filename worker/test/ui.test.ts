@@ -368,7 +368,11 @@ describe("画面", () => {
 		);
 		await newTask(project.id, { title: "孫の件名", parent_id: task.id });
 		await patch(task.id, { assignee_id: "akarin", labels: ["infra"] }, mac);
-		await patch(task.id, { state: "review", waiting_on: "進めてよいか" });
+		await patch(task.id, {
+			state: "review",
+			waiting_on: "進めてよいか",
+			note: "<b>方針</b>を決めた",
+		});
 		await patch(task.id, { order: { before: parent.id } });
 
 		const { status, body } = await text(`/tasks/${task.id}`);
@@ -389,6 +393,9 @@ describe("画面", () => {
 		expect(history).toContain("Owner・mac-agent・");
 		expect(history).toContain("Owner・ブラウザ・");
 		expect(history).toContain("並びを変更");
+		expect(history).toContain(
+			'<span class="note">&lt;b&gt;方針&lt;/b&gt;を決めた</span>',
+		);
 		expect(history).toContain("Akarin");
 		// 新しいものを上に出す
 		expect(history.indexOf("並びを変更")).toBeLessThan(history.indexOf("起票"));

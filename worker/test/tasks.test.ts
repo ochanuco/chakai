@@ -167,6 +167,55 @@ describe("状態", () => {
 	});
 });
 
+describe("note", () => {
+	it("更新に添えた一言を、変えた項目の後に note の行で残す", async () => {
+		const project = await newProject();
+		const task = await newTask(project.id);
+		const res = await patch(
+			task.id,
+			{ state: "done", note: "開始キーは <C-h> に決めた" },
+			working("yukarin"),
+		);
+		expect(res.status).toBe(200);
+		const events = (await eventsOf(task.id)).slice(1);
+		expect(events.map((e) => [e.field, e.before, e.after, e.actor_id])).toEqual(
+			[
+				["state", '"backlog"', '"done"', "yukarin"],
+				["note", null, '"開始キーは <C-h> に決めた"', "yukarin"],
+			],
+		);
+	});
+
+	it("一言だけの更新は、タスクを変えずに note の行だけを残す", async () => {
+		const project = await newProject();
+		const task = await newTask(project.id);
+		const res = await patch(task.id, { note: "途中経過" });
+		expect(res.status).toBe(200);
+		expect(await res.json()).toMatchObject({
+			updated_at: task.updated_at,
+			state: "backlog",
+		});
+		const events = (await eventsOf(task.id)).slice(1);
+		expect(events.map((e) => [e.field, e.after])).toEqual([
+			["note", '"途中経過"'],
+		]);
+	});
+
+	it("何も変わらない更新に添えた一言も残す", async () => {
+		const project = await newProject();
+		const task = await newTask(project.id);
+		await patch(task.id, { state: "backlog", note: "backlog のまま" });
+		const events = (await eventsOf(task.id)).slice(1);
+		expect(events.map((e) => e.field)).toEqual(["note"]);
+	});
+
+	it("空の一言は受けない", async () => {
+		const project = await newProject();
+		const task = await newTask(project.id);
+		expect((await patch(task.id, { note: "  " })).status).toBe(400);
+	});
+});
+
 describe("events", () => {
 	it("起票を、actor と呼び出し元と一緒に 1 行で残す", async () => {
 		const project = await newProject();
