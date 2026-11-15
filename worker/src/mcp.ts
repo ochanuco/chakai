@@ -13,20 +13,23 @@ const SERVER_INFO = { name: "chakai", version: "1.0.0" };
 // 長い instructions を途中で切るクライアントがあるので、短く保つ
 export const INSTRUCTIONS = `chakai は owner と複数の AI を区別するタスク台帳。誰として記録されるかは呼び出し元で決まる。
 
+## 起票するもの
+会話が終わっても残るものだけ: 後でやること、セッションをまたぐ作業、owner の判断待ち。その場で終える作業は起票せず、PR を記録にする。渡されたタスクの作業は、そのタスクに記録する。
+
 ## 起票する
-1. list_projects でプロジェクトを決める。合うものが無ければ、owner に確かめてから create_project で作る。repo が決まっていれば link_repo で紐付ける。
-2. search_tasks を q 付きで呼び、似たタスクが無いかを確かめる。chakai は重複を判定しない。似たものがあれば、新しく作らずそれを示す。
+1. list_projects でプロジェクトを決める。合うものが無ければ、owner に確かめてから create_project で作る。
+2. search_tasks を q 付きで呼び、似たタスクが無いかを確かめる。似たものがあれば、作らずにそれを示す。
 3. create_task で作る。state は渡さず backlog にする。owner が「すぐやる」と言ったものだけ todo にする。
 4. title は、それだけで何をするかが分かる 1 文にする。body には、起きていること、終わったと言える条件、関係するファイルや URL を書く。会話の経緯は書かない。
 
-作業中に、頼まれた範囲の外の課題を見つけたら、その場で直さず、関係するプロジェクトの backlog に起票する。create_task の discovered_from に、作業中のタスクを渡す。
+頼まれた範囲の外の課題を見つけたら、その場で直さず、関係するプロジェクトの backlog に起票する。create_task の discovered_from に、作業中のタスクを渡す。
 
 ## 状態を動かす
-update_task の state を、その時点で変える。あとでまとめて直さない。
+update_task の state を、その時点で変える。
 - 着手する: doing
 - owner の判断が要る: review（waiting_on に仰ぐ内容を一言で）
 - 終わった: done
-- やめた: dropped（タスクは消せない）
+- やめた: dropped
 - backlog を todo に上げるのは、owner が着手を認めたときだけ。
 
 ## 途中で分ける
@@ -39,7 +42,7 @@ update_task の state を、その時点で変える。あとでまとめて直�
 - 参考にした Issue や資料は、add_link を role: "reference" で付ける。
 
 ## 探す
-- 次にやるもの: search_tasks を project_id と state: ["todo"] で呼ぶ。返る順が並び順なので、先頭が次のタスク。
+- 次にやるもの: search_tasks を project_id と state: ["todo"] で呼ぶ。先頭が次のタスク。
 - owner の番のもの: state: ["review"]。
 - 並びを変える: update_task の order。
 
