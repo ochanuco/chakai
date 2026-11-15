@@ -787,6 +787,21 @@ export const triageTask = async (
 	}, busy);
 };
 
+/** 親の子孫（親自身は含まない）を、木の形を組める最小限の列で返す */
+export const descendantsOf = (db: Db, parentId: string) =>
+	db.all<{
+		id: string;
+		parent_id: string;
+		state: TaskState;
+		order_key: string;
+	}>(sql`
+		WITH RECURSIVE d(id) AS (
+			SELECT id FROM tasks WHERE parent_id = ${parentId}
+			UNION ALL
+			SELECT t.id FROM tasks t JOIN d ON t.parent_id = d.id
+		)
+		SELECT t.id, t.parent_id, t.state, t.order_key FROM tasks t JOIN d ON d.id = t.id`);
+
 export type NextTask = {
 	task: Task | null;
 	descendant_states: Record<TaskState, number>;
@@ -803,18 +818,7 @@ export const nextTask = async (
 	if (!(await findRow(db, parentId))) {
 		return fail(404, "task_not_found", "タスクが無い");
 	}
-	const rows = await db.all<{
-		id: string;
-		parent_id: string;
-		state: TaskState;
-		order_key: string;
-	}>(sql`
-		WITH RECURSIVE d(id) AS (
-			SELECT id FROM tasks WHERE parent_id = ${parentId}
-			UNION ALL
-			SELECT t.id FROM tasks t JOIN d ON t.parent_id = d.id
-		)
-		SELECT t.id, t.parent_id, t.state, t.order_key FROM tasks t JOIN d ON d.id = t.id`);
+	const rows = await descendantsOf(db, parentId);
 
 	const counts = Object.fromEntries(TASK_STATES.map((s) => [s, 0])) as Record<
 		TaskState,

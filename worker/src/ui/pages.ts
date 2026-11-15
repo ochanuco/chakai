@@ -1,6 +1,7 @@
 import { TASK_STATES, type TaskState } from "../db/schema.ts";
 import type { TaskEvent } from "../history.ts";
 import type { Link } from "../links.ts";
+import { type Progress, progressOf } from "../progress.ts";
 import type { Actor, Label } from "../roster.ts";
 import {
 	SETTING_KEYS,
@@ -92,6 +93,7 @@ ol.history li{padding:8px 0;border-bottom:1px solid var(--line)}
 ol.history .when{color:var(--muted);font-size:.85rem}
 ol.history details pre{white-space:pre-wrap;margin:4px 0;padding:8px;background:var(--bg);border:1px solid var(--line);border-radius:6px;font:inherit;font-size:.875rem}
 .arrow{color:var(--muted);margin:0 4px}
+progress{width:6em;height:.6em;vertical-align:middle;accent-color:var(--done-fg)}
 ol.history .note{white-space:pre-wrap}
 `;
 
@@ -148,7 +150,14 @@ type RowOptions = {
 	movable?: boolean;
 	project?: ProjectRow;
 	since?: string;
+	progress?: Progress;
 };
+
+/** 数える末端が無い（子がすべて dropped の）ときは、率が意味を持たないので出さない */
+const progressBar = (p: Progress | undefined): Markup | "" =>
+	p && p.total > 0
+		? html`<progress value="${p.done}" max="${p.total}"></progress><span class="who">${p.done} / ${p.total}</span>`
+		: "";
 
 const taskRow = (task: TaskRow, o: RowOptions) => {
 	const classes = [
@@ -165,7 +174,7 @@ const taskRow = (task: TaskRow, o: RowOptions) => {
 		task.state === "review"
 			? html`<div class="waiting">仰ぐ内容: ${task.waitingOn ?? ""}${o.since ? html` <span class="muted">・${when(o.since, o.now)}から</span>` : ""}</div>`
 			: "";
-	return html`<div class="${classes}">${stateSelect(task)}<a class="title" href="/tasks/${task.id}">${task.title}</a>${labelChips(task.labels)}${
+	return html`<div class="${classes}">${stateSelect(task)}<a class="title" href="/tasks/${task.id}">${task.title}</a>${progressBar(o.progress)}${labelChips(task.labels)}${
 		task.assigneeId
 			? html`<span class="who">担当 ${nameOf(o.names, task.assigneeId)}</span>`
 			: ""
@@ -467,6 +476,8 @@ export const renderProject = (
 			roots.push(t);
 		}
 	}
+	// 絞り込みで隠れた子孫も数える
+	const progress = progressOf(tasks);
 	const branch = (siblings: TaskRow[], top: boolean): Markup =>
 		html`<ul${top ? html` class="tree"` : ""}>${siblings.map((t, i) => {
 			const children = childrenOf.get(t.id) ?? [];
@@ -474,6 +485,7 @@ export const renderProject = (
 				names,
 				now,
 				context: !matched.has(t.id),
+				progress: progress.get(t.id),
 				movable: true,
 				prev: siblings[i - 1]?.id,
 				next: siblings[i + 1]?.id,
@@ -597,7 +609,7 @@ export const renderTask = (
 			(a) => html` › <a href="/tasks/${a.id}">${a.title}</a>`,
 		)}</p>
 <h1>${task.title}</h1>
-<p>${badge(task.state)} ${labelChips(task.labels)}</p>
+<p>${badge(task.state)} ${progressBar(view.progress.get(task.id))} ${labelChips(task.labels)}</p>
 ${
 	task.state === "review"
 		? html`<div class="card"><strong>仰ぐ内容</strong>: ${task.waitingOn ?? ""}${view.reviewSince ? html`<div class="muted">${when(view.reviewSince, now)}から review</div>` : ""}</div>`
@@ -616,6 +628,7 @@ ${
 				taskRow(c, {
 					names,
 					now,
+					progress: view.progress.get(c.id),
 					movable: true,
 					prev: view.children[i - 1]?.id,
 					next: view.children[i + 1]?.id,
