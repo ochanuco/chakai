@@ -133,16 +133,79 @@ describe("状態", () => {
 		const project = await newProject();
 		const task = await newTask(project.id);
 		await patch(task.id, { state: "review", waiting_on: "見てほしい" });
-		const res = await patch(task.id, { state: "doing" });
+		const res = await patch(task.id, { state: "doing", note: "A で進める" });
 		expect(await res.json()).toMatchObject({
 			state: "doing",
 			waiting_on: null,
 		});
 		const events = await eventsOf(task.id);
-		expect(events.slice(-2).map((e) => [e.field, e.before, e.after])).toEqual([
+		expect(events.slice(-3).map((e) => [e.field, e.before, e.after])).toEqual([
 			["state", '"review"', '"doing"'],
 			["waiting_on", '"見てほしい"', null],
+			["note", null, '"A で進める"'],
 		]);
+	});
+
+	it("review から出すときは note が要る。空白だけの note も拒む", async () => {
+		const project = await newProject();
+		const task = await newTask(project.id);
+		await patch(task.id, { state: "review", waiting_on: "見てほしい" });
+		const res = await patch(task.id, { state: "done" });
+		expect(res.status).toBe(400);
+		expect(await res.json()).toMatchObject({
+			error: "note_required_to_leave_review",
+		});
+		expect((await patch(task.id, { state: "todo", note: "  " })).status).toBe(
+			400,
+		);
+		const still = await call(owner, "GET", `/v1/tasks/${task.id}`);
+		expect((await still.json<TaskJson>()).state).toBe("review");
+	});
+
+	it("get_task は最後の review の問いと、review を出たときの判断を返す", async () => {
+		const project = await newProject();
+		const task = await newTask(project.id, { state: "todo" });
+		const read = async () =>
+			(await call(owner, "GET", `/v1/tasks/${task.id}`)).json<{
+				last_review: unknown;
+			}>();
+		expect((await read()).last_review).toBeNull();
+
+		await patch(task.id, { state: "doing" }, working("yukarin"));
+		await patch(
+			task.id,
+			{ state: "review", waiting_on: "A と B のどちらか" },
+			working("yukarin"),
+		);
+		expect((await read()).last_review).toMatchObject({
+			from: "doing",
+			question: "A と B のどちらか",
+			asked_by: "yukarin",
+			to: null,
+			answer: null,
+			answered_by: null,
+		});
+
+		await patch(task.id, { state: "doing", note: "B で。C は残す" });
+		expect((await read()).last_review).toMatchObject({
+			from: "doing",
+			question: "A と B のどちらか",
+			asked_by: "yukarin",
+			to: "doing",
+			answer: "B で。C は残す",
+			answered_by: "owner",
+		});
+
+		// 次の review に入ると、前の判断は返さない
+		await patch(
+			task.id,
+			{ state: "review", waiting_on: "C も消すか" },
+			working("yukarin"),
+		);
+		expect((await read()).last_review).toMatchObject({
+			question: "C も消すか",
+			answer: null,
+		});
 	});
 
 	it("review でないタスクに waiting_on は付けられない", async () => {

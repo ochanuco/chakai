@@ -11,7 +11,12 @@ import {
 	taskRelations,
 	tasks,
 } from "../db/schema.ts";
-import { chunked, reviewSince } from "../history.ts";
+import {
+	chunked,
+	type LastReview,
+	lastReview,
+	reviewSince,
+} from "../history.ts";
 import { type Link, linksOf } from "../links.ts";
 import { type Progress, progressOf } from "../progress.ts";
 import { relationsOf } from "../relations.ts";
@@ -72,7 +77,7 @@ export const loadStateCounts = async (db: Db) => {
 	return byProject;
 };
 
-export type ReviewRow = TaskRow & { since: string };
+export type ReviewRow = TaskRow & { since: string; from: TaskState | null };
 
 /** owner の番のタスクを、待たせている時間の長い順に返す */
 export const loadReviews = async (db: Db): Promise<ReviewRow[]> => {
@@ -80,7 +85,14 @@ export const loadReviews = async (db: Db): Promise<ReviewRow[]> => {
 	const ids = rows.map((r) => r.id);
 	const since = await reviewSince(db, ids);
 	return withLabels(rows, await labelPairs(db, ids))
-		.map((r) => ({ ...r, since: since.get(r.id) ?? r.updatedAt }))
+		.map((r) => {
+			const entered = since.get(r.id);
+			return {
+				...r,
+				since: entered?.at ?? r.updatedAt,
+				from: entered?.from ?? null,
+			};
+		})
 		.sort((a, b) => (a.since < b.since ? -1 : a.since > b.since ? 1 : 0));
 };
 
@@ -207,7 +219,7 @@ export type TaskView = {
 	/** 根から親までの順 */
 	ancestors: { id: string; title: string }[];
 	children: TaskRow[];
-	reviewSince: string | null;
+	lastReview: LastReview | null;
 	relations: RelatedTask[];
 	runs: Run[];
 	links: Link[];
@@ -325,9 +337,6 @@ export const loadTask = async (
 				state: d.state,
 			})),
 		]),
-		reviewSince:
-			row.state === "review"
-				? ((await reviewSince(db, [row.id])).get(row.id) ?? null)
-				: null,
+		lastReview: await lastReview(db, row.id),
 	};
 };

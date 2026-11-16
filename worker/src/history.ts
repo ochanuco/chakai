@@ -1,6 +1,12 @@
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "./db/client.ts";
-import { callers, events, tasks } from "./db/schema.ts";
+import {
+	callers,
+	events,
+	TASK_STATES,
+	type TaskState,
+	tasks,
+} from "./db/schema.ts";
 import { fail, ok, type Result } from "./result.ts";
 
 export type TaskEvent = {
@@ -71,12 +77,17 @@ export const chunked = <T>(items: T[], size = IDS_PER_QUERY): T[][] =>
 		items.slice(i * size, (i + 1) * size),
 	);
 
-/** いまの review に入った時刻を、タスクごとに返す。最後に state を review にした履歴の時刻 */
+/** いまの review に入った時刻と、入る前の状態を、タスクごとに返す。最後に state を review にした履歴から取る */
 export const reviewSince = async (db: Db, taskIds: string[]) => {
-	const since = new Map<string, string>();
+	const since = new Map<string, { at: string; from: TaskState | null }>();
 	for (const ids of chunked(taskIds)) {
+		// SQLite は max() と並べた列を、max の行の値で返す
 		const rows = await db
-			.select({ taskId: events.entityId, at: sql<string>`max(${events.at})` })
+			.select({
+				taskId: events.entityId,
+				at: sql<string>`max(${events.at})`,
+				before: events.before,
+			})
 			.from(events)
 			.where(
 				and(
@@ -88,7 +99,87 @@ export const reviewSince = async (db: Db, taskIds: string[]) => {
 				),
 			)
 			.groupBy(events.entityId);
-		for (const r of rows) since.set(r.taskId, r.at);
+		for (const r of rows) {
+			since.set(r.taskId, { at: r.at, from: asState(decode(r.before)) });
+		}
 	}
 	return since;
+};
+
+const asState = (value: unknown): TaskState | null =>
+	TASK_STATES.includes(value as TaskState) ? (value as TaskState) : null;
+
+/** 最後の review の問いと、review を出たときの判断 */
+export type LastReview = {
+	/** review の前の状態 */
+	from: TaskState | null;
+	question: string | null;
+	asked_by: string;
+	asked_at: string;
+	/** review を出た先。まだ review なら null */
+	to: TaskState | null;
+	answer: string | null;
+	answered_by: string | null;
+	answered_at: string | null;
+};
+
+/**
+ * タスクの最後の review を、履歴から組み立てる。review に入る・出る更新と、
+ * それに添えた waiting_on と note は同じ batch で書くので、同じ at の行をまとめて読む
+ */
+export const lastReview = async (
+	db: Db,
+	taskId: string,
+): Promise<LastReview | null> => {
+	const rows = await db
+		.select({
+			at: events.at,
+			actorId: events.actorId,
+			field: events.field,
+			before: events.before,
+			after: events.after,
+		})
+		.from(events)
+		.where(
+			and(
+				eq(events.entity, "task"),
+				eq(events.entityId, taskId),
+				inArray(events.field, ["state", "waiting_on", "note"]),
+			),
+		)
+		.orderBy(asc(events.id));
+	const byAt = new Map<string, typeof rows>();
+	for (const r of rows) byAt.set(r.at, [...(byAt.get(r.at) ?? []), r]);
+
+	let review: LastReview | null = null;
+	for (const [at, group] of byAt) {
+		const state = group.find((r) => r.field === "state");
+		const before = asState(decode(state?.before ?? null));
+		const after = asState(decode(state?.after ?? null));
+		if (state && after === "review") {
+			review = {
+				from: before,
+				question: null,
+				asked_by: state.actorId,
+				asked_at: at,
+				to: null,
+				answer: null,
+				answered_by: null,
+				answered_at: null,
+			};
+		}
+		if (!review || review.answered_at) continue;
+		const waiting = decode(
+			group.find((r) => r.field === "waiting_on")?.after ?? null,
+		);
+		if (typeof waiting === "string") review.question = waiting;
+		if (state && before === "review") {
+			const note = decode(group.find((r) => r.field === "note")?.after ?? null);
+			review.to = after;
+			review.answer = typeof note === "string" ? note : null;
+			review.answered_by = state.actorId;
+			review.answered_at = at;
+		}
+	}
+	return review;
 };

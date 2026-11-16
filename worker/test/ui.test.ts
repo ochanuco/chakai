@@ -241,6 +241,46 @@ describe("画面", () => {
 		expect(body).toMatch(/\d{4}-\d{2}-\d{2} \d{2}:\d{2}（たった今）から/);
 	});
 
+	it("owner の番の行に返信欄を付け、続けさせる先は review の前の状態にする", async () => {
+		const project = await newProject();
+		const fromDoing = await newTask(project.id, { state: "todo" });
+		await patch(fromDoing.id, { state: "doing" });
+		await patch(fromDoing.id, {
+			state: "review",
+			waiting_on: "作業中に仰いだ",
+		});
+		const fromBacklog = await newTask(project.id);
+		await patch(fromBacklog.id, {
+			state: "review",
+			waiting_on: "起票直後に仰いだ",
+		});
+
+		const { body } = await text("/");
+		const formOf = (id: string) => {
+			const start = body.indexOf(`data-reply="${id}"`);
+			return body.slice(start, body.indexOf("</form>", start));
+		};
+		expect(formOf(fromDoing.id)).toContain(
+			'<button type="submit" value="doing">返信して続けさせる（doing）</button>',
+		);
+		// backlog に戻すと誰も拾わないので、作業の状態でなければ todo にする
+		expect(formOf(fromBacklog.id)).toContain(
+			'value="todo">返信して続けさせる（todo）',
+		);
+		expect(formOf(fromBacklog.id)).toContain('value="done">完了にする');
+		expect(formOf(fromBacklog.id)).toContain('value="dropped">やめる');
+	});
+
+	it("タスクの画面では、review のときだけ返信欄を出す", async () => {
+		const project = await newProject();
+		const task = await newTask(project.id, { state: "todo" });
+		expect((await text(`/tasks/${task.id}`)).body).not.toContain("data-reply=");
+		await patch(task.id, { state: "review", waiting_on: "見てほしい" });
+		const { body } = await text(`/tasks/${task.id}`);
+		expect(body).toContain(`data-reply="${task.id}"`);
+		expect(body).toContain("返信して続けさせる（todo）");
+	});
+
 	it("タスクの無いプロジェクトは札にせず、畳んだ一覧に名前だけ出す", async () => {
 		const busy = await newProject();
 		const idle = await newProject();
