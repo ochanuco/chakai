@@ -28,7 +28,8 @@ actor の ID は名簿の名前（`owner`、`yukarin` など）で、それ以�
 ## タスク
 
 - 状態は `backlog`・`todo`・`doing`・`review`・`done`・`dropped`。起票の既定は `backlog` で、起票のときに選べるのは `backlog` と `todo` だけ。
-- `review` は owner の番を表す。`review` にするときは `waiting_on` が要り、`review` を出ると `waiting_on` は空になる。
+- `review` は owner の番を表す。`review` にするときは `waiting_on` が要る。`review` を出るときは `note` に判断を書くことが要り、`waiting_on` は空になる。
+- タスクを読むと、最後の `review` を `last_review` に返す。`from` は前の状態、`question` は仰いだ内容、`to` は出た先、`answer` は出たときの `note`、`answered_by` はそれを書いた actor。まだ `review` なら `to` から後は `null`。
 - タスクは消さない。やめたものは `dropped` にする。
 - `order_key` はプロジェクト内の並びを表す fractional index。起票すると末尾に入り、更新の `order` で他のタスクの直前・直後に動かす。
 - 書き込みはすべて `events` に追記する（`actor_id`、`caller_id`、`field`、`before`、`after`）。`events` は更新も削除もできない。
@@ -65,7 +66,7 @@ actor の ID は名簿の名前（`owner`、`yukarin` など）で、それ以�
 | `POST /v1/projects/:id/repos`  | repo を紐付ける（`repo` は `owner/name`）                                                                                                                               |
 | `GET /v1/tasks`                | タスクを探す（`project_id`、`q`、`state`（カンマ区切り）、`assignee_id`、`parent_id`、`label`、`awaiting_triage`、`limit`、`cursor`）                                   |
 | `POST /v1/tasks`               | 起票する（`project_id`、`title`、`body`、`parent_id`、`state`、`assignee_id`、`labels`、`discovered_from`）                                                             |
-| `GET /v1/tasks/:id`            | タスクを、関係（`relations`）とリンク（`links`。成果物の PR は `github` に取り込んだ状態を持つ）と一緒に読む                                                            |
+| `GET /v1/tasks/:id`            | タスクを、関係（`relations`）、リンク（`links`。成果物の PR は `github` に取り込んだ状態を持つ）、最後の `review`（`last_review`）と一緒に読む                          |
 | `PATCH /v1/tasks/:id`          | 更新する（`title`、`body`、`state`、`waiting_on`、`assignee_id`、`labels`、`order`、`note`）                                                                            |
 | `GET /v1/tasks/:id/next`       | 親の子孫のうち、木の順（深さ優先、同じ親の中は `order_key` の順）で最初の `todo` を `task` に返す。無ければ `null`。`descendant_states` は子孫の状態ごとの数            |
 | `POST /v1/tasks/:id/relations` | `:id` のタスクから関係を付ける（`kind`、`to_task`、`run_id`）。`run_id` は `discovered_from` にだけ付けられ、`to_task` かその祖先を回した run に限る                    |
@@ -101,14 +102,14 @@ owner が Access にログインして `https://chakai.chanu.co/` を開く。se
 
 | 画面            | 中身                                                                                                                                                   |
 | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `/`             | owner の番（`review` のタスクを、プロジェクトをまたいで待たせている順に）と、プロジェクトの一覧。タスクの無いプロジェクトは畳む                        |
+| `/`             | owner の番（`review` のタスクを、プロジェクトをまたいで待たせている順に、返信欄付きで）と、プロジェクトの一覧。タスクの無いプロジェクトは畳む          |
 | `/projects/:id` | プロジェクトの参考リンクと、タスクの親子ツリー。`?state=` で絞る（無ければ `done` と `dropped` を除き、`all` ですべて）                                |
 | `/tasks/:id`    | 本文、子タスク、成果物の PR（状態・レビュー・CI・最後に同期した時刻）、参考リンク、関係、実行記録、状態・担当・ラベルの変更と一言、履歴                |
 | `/triage`       | 仕分け待ち（プロジェクトをまたいで、起票の古い順に）。`todo` に上げる、`dropped` にする、`backlog` に残す、のどれかを選ぶ                              |
 | `/sync`         | 同期の結果を新しい順に。警告はその回の下に出す                                                                                                         |
 | `/settings`     | `max_self_todo_depth` の、全体の値とプロジェクトごとの上書き。効いている値と出どころ（既定・全体・プロジェクト）を出す。上書きの無いプロジェクトは畳む |
 
-子を持つタスクには、子孫の末端タスクのうち `done` の数と、`dropped` の枝を除いた数を、件数と進捗バーで出す（ツリーは絞り込みで隠れた子孫も数える）。状態は一覧の各行でも変えられ、並びは行の ↑ と ↓ で、同じ親の隣のタスクと入れ替える。仕分け待ちの件数は、どの画面のナビゲーションにも出る。直近の同期に警告があれば、その数もナビゲーションの「同期」に出る。起票と、件名・本文の編集、リンクの追加と削除は画面に無い。
+子を持つタスクには、子孫の末端タスクのうち `done` の数と、`dropped` の枝を除いた数を、件数と進捗バーで出す（ツリーは絞り込みで隠れた子孫も数える）。`review` のタスクには返信欄を出し、返信を `note` に残して、`review` の前の状態（`todo` か `doing`。それ以外なら `todo`）に戻すか、`done` か `dropped` にする。状態は一覧の各行でも変えられ、並びは行の ↑ と ↓ で、同じ親の隣のタスクと入れ替える。仕分け待ちの件数は、どの画面のナビゲーションにも出る。直近の同期に警告があれば、その数もナビゲーションの「同期」に出る。起票と、件名・本文の編集、リンクの追加と削除は画面に無い。
 
 ## 開発
 

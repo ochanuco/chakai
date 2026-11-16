@@ -797,7 +797,9 @@ describe("親を review にする", () => {
 				},
 			]);
 			// 自動で動かした後も、親の更新が通る（revision が合っている）
-			expect((await patch(parent.id, { state: "done" })).status).toBe(200);
+			expect(
+				(await patch(parent.id, { state: "done", note: "確かめた" })).status,
+			).toBe(200);
 		}
 	});
 
@@ -842,7 +844,7 @@ describe("親を review にする", () => {
 		expect((await read(parent.id)).state).toBe("doing");
 
 		const g3 = await newTask(project.id, { parent_id: child, state: "todo" });
-		await patch(child, { state: "done" });
+		await patch(child, { state: "done", note: "孫は別で進める" });
 		expect((await read(g3.id)).state).toBe("todo");
 		expect(await read(parent.id)).toMatchObject({
 			state: "review",
@@ -861,7 +863,7 @@ describe("親を review にする", () => {
 	it("片付いた子の件名を直しても、review を出た親を戻さない", async () => {
 		const { parent, kids } = await family("doing", 1);
 		await patch(kids[0]?.id ?? "", { state: "done" });
-		await patch(parent.id, { state: "doing" });
+		await patch(parent.id, { state: "doing", note: "続ける" });
 		await patch(kids[0]?.id ?? "", { title: "件名だけ" });
 		expect((await read(parent.id)).state).toBe("doing");
 	});

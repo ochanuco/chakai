@@ -28,6 +28,7 @@ import {
 } from "./db/schema.ts";
 import { retryOnConflict, writeAll } from "./db/write.ts";
 import { type Change, eventInserts } from "./events.ts";
+import { type LastReview, lastReview } from "./history.ts";
 import { newId } from "./id.ts";
 import { type Link, linksOf } from "./links.ts";
 import { projectExists } from "./projects.ts";
@@ -59,7 +60,10 @@ export type Task = {
 };
 
 export type TaskWithRelations = Task & { relations: Relation[] };
-export type TaskDetail = TaskWithRelations & { links: Link[] };
+export type TaskDetail = TaskWithRelations & {
+	links: Link[];
+	last_review: LastReview | null;
+};
 
 type TaskRow = typeof tasks.$inferSelect;
 
@@ -108,6 +112,7 @@ export const getTask = async (
 		...toTask(row, (await labelsOf(db, [id])).get(id) ?? []),
 		relations: await relationsOf(db, id),
 		links: (await linksOf(db, "task", [id])).get(id) ?? [],
+		last_review: await lastReview(db, id),
 	});
 };
 
@@ -616,6 +621,18 @@ export const updateTask = async (
 		const currentLabels = (await labelsOf(db, [id])).get(id) ?? [];
 
 		const state = input.state ?? current.state;
+		// owner の判断を、次に作業する AI が get_task の last_review で読めるようにする
+		if (
+			current.state === "review" &&
+			state !== "review" &&
+			!input.note?.trim()
+		) {
+			return fail(
+				400,
+				"note_required_to_leave_review",
+				"review から出すときは note に判断を書く",
+			);
+		}
 		// backlog で作ってから todo に上げても、起票のときと同じ上限に掛かる
 		if (state === "todo" && current.state !== "todo" && current.parentId) {
 			const depth = await checkSelfTodoDepth(

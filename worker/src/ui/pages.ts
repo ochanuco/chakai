@@ -62,6 +62,8 @@ ul.tree ul{margin-left:14px;padding-left:10px;border-left:2px solid var(--line)}
 .row .title{flex:1 1 180px;min-width:0;color:var(--fg)}
 .row .who{color:var(--muted);font-size:.85rem;white-space:nowrap}
 .row .waiting{flex-basis:100%;font-size:.875rem;color:var(--review-fg)}
+.reply{flex-basis:100%}
+.reply textarea{width:100%;box-sizing:border-box;font:inherit}
 .row.context{opacity:.55}
 .row.closed .title{color:var(--muted)}
 .row .rel{flex:0 0 7.5em;color:var(--muted);font-size:.85rem}
@@ -151,6 +153,17 @@ type RowOptions = {
 	project?: ProjectRow;
 	since?: string;
 	progress?: Progress;
+	/** review のタスクに返信欄を付けるとき、review の前の状態 */
+	reply?: { from: TaskState | null };
+};
+
+/** 続けさせるときは review の前の作業の状態に戻す。前が作業の状態でなければ todo にする */
+const resumeState = (from: TaskState | null): TaskState =>
+	from === "todo" || from === "doing" ? from : "todo";
+
+const replyForm = (taskId: string, from: TaskState | null) => {
+	const resume = resumeState(from);
+	return html`<form class="reply" data-reply="${taskId}"><textarea name="answer" rows="2" maxlength="2000" required aria-label="返信" placeholder="判断を書く。次に作業する AI がそのまま読む"></textarea><div class="actions"><button type="submit" value="${resume}">返信して続けさせる（${resume}）</button><button type="submit" value="done">完了にする</button><button type="submit" value="dropped">やめる</button></div></form>`;
 };
 
 /** 数える末端が無い（子がすべて dropped の）ときは、率が意味を持たないので出さない */
@@ -178,7 +191,9 @@ const taskRow = (task: TaskRow, o: RowOptions) => {
 		task.assigneeId
 			? html`<span class="who">担当 ${nameOf(o.names, task.assigneeId)}</span>`
 			: ""
-	}${o.project ? html`<a class="who" href="/projects/${o.project.id}">${o.project.name}</a>` : ""}${move}${waiting}</div>`;
+	}${o.project ? html`<a class="who" href="/projects/${o.project.id}">${o.project.name}</a>` : ""}${move}${waiting}${
+		task.state === "review" && o.reply ? replyForm(task.id, o.reply.from) : ""
+	}</div>`;
 };
 
 type Tone = "good" | "bad" | "wait" | "";
@@ -288,6 +303,7 @@ ${
 					now: view.now,
 					project: projectById.get(t.projectId),
 					since: t.since,
+					reply: { from: t.from },
 				}),
 			)}</div>`
 }
@@ -612,7 +628,7 @@ export const renderTask = (
 <p>${badge(task.state)} ${progressBar(view.progress.get(task.id))} ${labelChips(task.labels)}</p>
 ${
 	task.state === "review"
-		? html`<div class="card"><strong>仰ぐ内容</strong>: ${task.waitingOn ?? ""}${view.reviewSince ? html`<div class="muted">${when(view.reviewSince, now)}から review</div>` : ""}</div>`
+		? html`<div class="card"><strong>仰ぐ内容</strong>: ${task.waitingOn ?? ""}${view.lastReview ? html`<div class="muted">${nameOf(names, view.lastReview.asked_by)}・${when(view.lastReview.asked_at, now)}から review</div>` : ""}${replyForm(task.id, view.lastReview?.from ?? null)}</div>`
 		: ""
 }
 <dl class="meta">
@@ -662,7 +678,7 @@ ${
 				html`<label><input type="checkbox" name="label" value="${l.name}"${task.labels.includes(l.name) ? html` checked` : ""}> ${l.name}</label>`,
 		)}</div></div>
 <div class="field"><label for="f-new-labels">新しいラベル（カンマで区切る）</label><input id="f-new-labels" type="text" name="new_labels" autocomplete="off"></div>
-<div class="field"><label for="f-note">一言（履歴に残す）</label><textarea id="f-note" name="note" rows="2" maxlength="2000"></textarea></div>
+<div class="field"><label for="f-note">一言（履歴に残す。review から出すときに要る）</label><textarea id="f-note" name="note" rows="2" maxlength="2000"></textarea></div>
 <button type="submit">保存</button>
 </form>
 <h2>履歴</h2>

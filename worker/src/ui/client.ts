@@ -53,6 +53,13 @@ export const CLIENT_JS = `"use strict";
 				return;
 			}
 			body.waiting_on = waitingOn;
+		} else if (select.dataset.current === "review") {
+			const note = (prompt("判断（note）") ?? "").trim();
+			if (!note) {
+				select.value = select.dataset.current;
+				return;
+			}
+			body.note = note;
 		}
 		select.disabled = true;
 		if (!(await patch(id, body))) {
@@ -85,6 +92,24 @@ export const CLIENT_JS = `"use strict";
 				? await send("POST", taskPath(id) + "/triage")
 				: await patch(id, { state: action });
 		if (!done) for (const b of siblings) b.disabled = false;
+	});
+
+	document.addEventListener("submit", async (event) => {
+		const form = event.target;
+		if (!(form instanceof HTMLFormElement) || !form.dataset.reply) return;
+		event.preventDefault();
+		const note = form.elements.namedItem("answer").value.trim();
+		if (!note) {
+			showError("返信を書く");
+			return;
+		}
+		const buttons = form.querySelectorAll("button");
+		for (const b of buttons) b.disabled = true;
+		const sent = await patch(form.dataset.reply, {
+			state: event.submitter.value,
+			note,
+		});
+		if (!sent) for (const b of buttons) b.disabled = false;
 	});
 
 	const putSetting = async (form, value) => {
@@ -122,10 +147,12 @@ export const CLIENT_JS = `"use strict";
 		const state = form.elements.namedItem("state");
 		const waitingOn = form.elements.namedItem("waiting_on");
 		const waitingRow = document.getElementById("waiting-row");
+		const note = form.elements.namedItem("note");
 		const syncWaiting = () => {
 			const review = state.value === "review";
 			waitingRow.hidden = !review;
 			waitingOn.required = review;
+			note.required = form.dataset.state === "review" && !review;
 		};
 		state.addEventListener("change", syncWaiting);
 		syncWaiting();
@@ -151,8 +178,7 @@ export const CLIENT_JS = `"use strict";
 			) {
 				body.waiting_on = waitingOn.value.trim();
 			}
-			const note = form.elements.namedItem("note").value.trim();
-			if (note) body.note = note;
+			if (note.value.trim()) body.note = note.value.trim();
 			if (Object.keys(body).length === 0) {
 				showError("変えた欄が無い");
 				return;

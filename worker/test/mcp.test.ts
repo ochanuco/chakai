@@ -83,6 +83,7 @@ describe("POST /mcp", () => {
 			"子を todo で作る",
 			"follows を付けてから",
 			"replaced_by を付けてから",
+			"get_task の last_review.answer に従う",
 			"discovered_from に、作業中のタスクを渡す",
 		]) {
 			expect(text).toContain(part);
@@ -98,6 +99,7 @@ describe("POST /mcp", () => {
 					"project_id",
 					"discovered_from",
 					"replaced_by",
+					"last_review",
 				].includes(name)
 			)
 				continue;

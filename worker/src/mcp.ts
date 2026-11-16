@@ -22,7 +22,7 @@ export const INSTRUCTIONS = `chakai は owner と複数の AI を区別するタ
 3. create_task で作る。state は渡さず backlog にする。owner が「すぐやる」と言ったものだけ todo にする。
 4. title は、それだけで何をするかが分かる 1 文にする。body には、起きていること、終わったと言える条件、関係するファイルや URL を書く。会話の経緯は書かない。
 
-頼まれた範囲の外の課題を見つけたら、その場で直さず、関係するプロジェクトの backlog に起票する。create_task の discovered_from に、作業中のタスクを渡す。
+頼まれた範囲の外の課題は、その場で直さず、関係するプロジェクトの backlog に起票する。create_task の discovered_from に、作業中のタスクを渡す。
 
 ## 状態を動かす
 update_task の state を、その時点で変える。
@@ -30,7 +30,8 @@ update_task の state を、その時点で変える。
 - owner の判断が要る: review（waiting_on に仰ぐ内容を一言で）
 - 終わった: done（note に決めたこと）
 - やめた: dropped（note にやめた理由）
-- backlog を todo に上げるのは、owner が着手を認めたときだけ。
+- backlog を todo に上げるのは、owner が認めたときだけ。
+- 着手したら get_task の last_review.answer に従う。
 
 ## 途中で分ける
 - 大きすぎた（範囲は同じ）: create_task の parent_id に今のタスクを渡し、子を todo で作る。今のタスクは doing のまま残す。深さの上限で拒まれたら、backlog で作るか、今のタスクを review にする。
@@ -44,11 +45,10 @@ update_task の state を、その時点で変える。
 ## 探す
 - 次にやるもの: search_tasks を project_id と state: ["todo"] で呼ぶ。先頭が次のタスク。
 - owner の番のもの: state: ["review"]。
-- 並びを変える: update_task の order。
 
 ## 書き方
 - labels は渡した一覧に置き換わる。足すときは、get_task で今のラベルを読んでから足す。
-- タスクや actor の ID を、owner への報告にそのまま並べない。件名で示す。`;
+- タスクや actor の ID は、owner への報告に並べず、件名で示す。`;
 
 const Message = v.object({
 	jsonrpc: v.literal("2.0"),
@@ -221,7 +221,7 @@ export const TOOLS: {
 		name: "get_task",
 		title: "タスクを読む",
 		description:
-			"ID のタスクを、ラベルと、他のタスクとの関係（relations。このタスクが from か to のもの）、リンク（links。成果物の PR は github に取り込んだ状態を持つ）と一緒に返す。",
+			"ID のタスクを、ラベルと、他のタスクとの関係（relations。このタスクが from か to のもの）、リンク（links。成果物の PR は github に取り込んだ状態を持つ）、最後の review（last_review。question が仰いだ内容、answer が review を出たときの note、answered_by がそれを書いた actor）と一緒に返す。",
 		inputSchema: {
 			type: "object",
 			properties: { task_id: id },
@@ -272,7 +272,7 @@ export const TOOLS: {
 		name: "update_task",
 		title: "タスクを更新する",
 		description:
-			"タスクの件名、本文、状態、並び、ラベル、担当、waiting_on を変える。渡した項目だけが変わる。note は変えた内容と一緒に履歴に残り、note だけを渡せばタスクを変えずに一言を残す。review（owner の番）にするときは waiting_on が要り、review を出ると waiting_on は空になる。",
+			"タスクの件名、本文、状態、並び、ラベル、担当、waiting_on を変える。渡した項目だけが変わる。note は変えた内容と一緒に履歴に残り、note だけを渡せばタスクを変えずに一言を残す。review（owner の番）にするときは waiting_on が要る。review を出るときは note が要り、waiting_on は空になる。",
 		inputSchema: {
 			type: "object",
 			properties: {
