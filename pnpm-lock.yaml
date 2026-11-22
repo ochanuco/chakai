@@ -183,7 +183,7 @@ importers:
         version: 4.0.0
       jose:
         specifier: ^6.2.12
-        version: 6.2.16
+        version: 6.2.17
       uuidv7:
         specifier: ^1.0.2
         version: 1.2.1
@@ -1403,8 +1403,8 @@ packages:
   get-tsconfig@4.14.3:
     resolution: {integrity: sha512-++QEw4DIY7WGoukz+/+A/8dGYPT9l9yIadnmSgZ8Rjr3YVSVDipQSO9CdnJo9ePqFqUUqh+wk9uIaoiAwsiPkA==}
 
-  jose@6.2.16:
-    resolution: {integrity: sha512-4LSJpbuBuPdGrONCdZUy0xnxtLf8eEz+EY0SMXdHQEBU7bgUHDVblU/JAjryv3wID9/LK7/YuwFwq+AQNfMscQ==}
+  jose@6.2.17:
+    resolution: {integrity: sha512-wOuK9V1yujQFH5S0ZWmLcDZN7+IKh9bUCC2ZPCf2HDlol3WWHy+PPyNjEI75FXRLMp3vDKQcupP59xhVU95hcg==}
 
   kleur@4.1.5:
     resolution: {integrity: sha512-o+NO+8WrRiQEE4/7nwRJhN1HWpVmJm511pBHUxPLtp0BUISzlBplORYSmTclCnJvQq2tKu/sgl3xVpkc7ZWuQQ==}
@@ -2452,7 +2452,7 @@ snapshots:
     dependencies:
       resolve-pkg-maps: 1.0.0
 
-  jose@6.2.16: {}
+  jose@6.2.17: {}
 
   kleur@4.1.5: {}
 
