@@ -166,7 +166,7 @@ ul.tree ul{margin-left:14px;padding-left:10px;border-left:2px solid var(--line)}
 .move button:disabled{opacity:.3}
 .body-text{white-space:pre-wrap}
 .inline{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
-.actions button,button.plain{padding:4px 12px;border-radius:6px;border:1px solid var(--line-strong);background:var(--surface)}
+.doc .actions button,button.plain{padding:4px 12px;border-radius:6px;border:1px solid var(--line-strong);background:var(--surface)}
 form .field{margin:10px 0;border:0;padding:0}
 form .field>label,form .field>legend{display:block;font-size:12px;color:var(--muted);margin-bottom:2px;padding:0}
 form select,form input[type=text],form input[type=number],form textarea{color:var(--ink);background:var(--paper);border:1px solid var(--line-strong);border-radius:6px;padding:6px 8px;max-width:100%}
@@ -271,8 +271,11 @@ const syncWarning = (nav: Nav) =>
 		? html`<span class="warn">警告 ${nav.syncWarnings}</span>`
 		: "";
 
-const foot = (nav: Nav, item?: MoreItem) =>
-	html`<div class="foot"><span class="brand">chakai</span>${MORE.map(
+/** More の画面では左ペインに同じリンクが並ぶので、下の帯には出さない */
+const foot = (nav: Nav, section: Section, item?: MoreItem) =>
+	html`<div class="foot"><span class="brand">chakai</span>${(
+		section === "more" ? [] : MORE
+	).map(
 		(m) =>
 			html`<a href="${m.href}"${current(m.item === item)}>${m.label}${m.item === "sync" ? syncWarning(nav) : ""}</a>`,
 	)}</div>`;
@@ -306,7 +309,7 @@ export const page = (s: Shell): string =>
 </head>
 <body class="pane-${s.pane}">
 <div class="app">
-<aside class="side">${switcher(s.nav, s.section)}${s.side}${foot(s.nav, s.more)}</aside>
+<aside class="side">${switcher(s.nav, s.section)}${s.side}${foot(s.nav, s.section, s.more)}</aside>
 <main class="main"><p id="alert" class="alert" role="alert" hidden></p>${s.main}</main>
 ${tabbar(s.nav, s.section)}
 </div>

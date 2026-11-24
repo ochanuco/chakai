@@ -198,7 +198,7 @@ type Entry = {
 	at: string;
 	actor: string;
 	via: string;
-	kind: "line" | "card" | "question" | "answer";
+	kind: "line" | "say" | "question" | "answer";
 	what: Markup;
 	text: string | null;
 	/** 問いと一緒に残した一言 */
@@ -271,7 +271,7 @@ const entryOf = (group: TaskEvent[], names: Names): Entry | null => {
 		return {
 			...base,
 			kind: "question",
-			what: joined([html`review にした`, ...rest]),
+			what: joined([html` review にした`, ...rest]),
 			text: typeof waiting?.after === "string" ? waiting.after : null,
 			note: noteText,
 			detail,
@@ -288,7 +288,7 @@ const entryOf = (group: TaskEvent[], names: Names): Entry | null => {
 		};
 	}
 	const parts = [
-		...(state && isState(state.after) ? [html`${state.after} にした`] : []),
+		...(state && isState(state.after) ? [html` ${state.after} にした`] : []),
 		...(waiting && typeof waiting.after === "string"
 			? [html`問いを変えた`]
 			: []),
@@ -299,7 +299,7 @@ const entryOf = (group: TaskEvent[], names: Names): Entry | null => {
 	if (parts.length === 0 && text === null) return null;
 	return {
 		...base,
-		kind: text === null ? "line" : "card",
+		kind: text === null ? "line" : "say",
 		what: parts.length > 0 ? joined(parts) : html`一言`,
 		text,
 		detail,
@@ -444,7 +444,7 @@ const chips = (d: Detail, names: Names) => {
 const subline = (d: Detail, names: Names) => {
 	const { task, lastReview } = d.view;
 	if (task.state === "review" && lastReview) {
-		return html`${nameOf(names, lastReview.asked_by)} が ${timeAgo(lastReview.asked_at, d.now)}に問いを出した`;
+		return html`${nameOf(names, lastReview.asked_by)} の問い ${timeAgo(lastReview.asked_at, d.now)}`;
 	}
 	return html`更新 ${timeAgo(task.updatedAt, d.now)}`;
 };
@@ -475,7 +475,7 @@ ${reviewing ? html`<div class="actions desk">${replyButtons(resume, "reply-desk"
 ${chips(d, names)}
 <div class="body">
 <div class="conv">
-<article class="ev card opening">${avatar(nameOf(names, task.createdBy))}<div class="bubble"><div class="bh"><span><b>${nameOf(names, task.createdBy)}</b> が起票した</span><span class="when">${timeAgo(task.createdAt, d.now)}${created ? html`<span class="via">${via(created)}</span>` : ""}</span></div>${task.body ? html`<p class="bt body">${task.body}</p>` : html`<p class="bt muted">本文は無い。</p>`}</div></article>
+<article class="ev say opening">${avatar(nameOf(names, task.createdBy))}<div class="bubble"><div class="bh"><span><b>${nameOf(names, task.createdBy)}</b> が起票した</span><span class="when">${timeAgo(task.createdAt, d.now)}${created ? html`<span class="via">${via(created)}</span>` : ""}</span></div>${task.body ? html`<p class="bt">${task.body}</p>` : html`<p class="bt muted">本文は無い。</p>`}</div></article>
 ${
 	d.view.children.length > 0
 		? html`<section class="children"><h2>子タスク</h2>${d.view.children.map(
@@ -484,8 +484,12 @@ ${
 			)}</section>`
 		: ""
 }
-<div class="tlhead"><h2>動き <span class="muted">${entries.length}</span></h2><a class="sort" href="${orderHref}">${d.order === "desc" ? "新しい順" : "古い順"}（切り替える）</a></div>
-<ol class="timeline">${timeline}</ol>
+${
+	timeline.length > 0
+		? html`<div class="tlhead"><h2>動き <span class="muted">${entries.length}</span></h2><a class="sort" href="${orderHref}">${d.order === "desc" ? "新しい順" : "古い順"}（切り替える）</a></div>
+<ol class="timeline">${timeline}</ol>`
+		: ""
+}
 </div>
 ${metaColumn(d, names)}
 </div>
