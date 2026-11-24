@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import type { Db } from "../db/client.ts";
 import {
 	events,
@@ -23,7 +23,7 @@ import { type Progress, progressOf } from "../progress.ts";
 import { relationsOf } from "../relations.ts";
 import { listRuns, type Run } from "../runs.ts";
 import { type Settings, settingsOfScopes } from "../settings.ts";
-import { awaitingTriage, descendantsOf } from "../tasks.ts";
+import { awaitingTriage, descendantsOf, escapeLike } from "../tasks.ts";
 
 export type TaskRow = typeof tasks.$inferSelect & { labels: string[] };
 export type ProjectRow = typeof projects.$inferSelect;
@@ -188,17 +188,110 @@ export const loadDoing = async (db: Db): Promise<DoingRow[]> => {
 	);
 };
 
+export type TodoRow = TaskRow & { parentTitle: string | null };
+
+/**
+ * todo のタスクを、AI が次に拾う順に返す。プロジェクトの名前の順に、プロジェクトの中は並び順。
+ * order_key はバイト順で比べる
+ */
+export const loadTodo = async (db: Db): Promise<TodoRow[]> => {
+	const rows = await db
+		.select({ task: tasks, projectName: projects.name })
+		.from(tasks)
+		.innerJoin(projects, eq(projects.id, tasks.projectId))
+		.where(eq(tasks.state, "todo"))
+		.orderBy(asc(projects.name), asc(tasks.projectId), asc(tasks.orderKey));
+	const list = rows.map((r) => r.task);
+	const parentIds = [
+		...new Set(list.flatMap((t) => (t.parentId ? [t.parentId] : []))),
+	];
+	const parents = new Map<string, string>();
+	for (const ids of chunked(parentIds)) {
+		for (const p of await db
+			.select({ id: tasks.id, title: tasks.title })
+			.from(tasks)
+			.where(inArray(tasks.id, ids))) {
+			parents.set(p.id, p.title);
+		}
+	}
+	return withLabels(
+		list,
+		await labelPairs(
+			db,
+			list.map((t) => t.id),
+		),
+	).map((t) => ({
+		...t,
+		parentTitle: t.parentId ? (parents.get(t.parentId) ?? null) : null,
+	}));
+};
+
+export type RecentRow = TaskRow & { activity: string };
+
+const RECENT_LIMIT = 50;
+
+/**
+ * 状態を問わず、最後に動いたタスクを新しい順に返す。q があれば件名と本文に q を含むものだけ。
+ * 画面の一覧から外れたタスクを見失わないための入口
+ */
+export const loadRecent = async (
+	db: Db,
+	q: string | null,
+): Promise<RecentRow[]> => {
+	let rows: (typeof tasks.$inferSelect)[];
+	if (q) {
+		const pattern = `%${escapeLike(q)}%`;
+		rows = await db
+			.select()
+			.from(tasks)
+			.where(
+				or(
+					sql`${tasks.title} LIKE ${pattern} ESCAPE '\\'`,
+					sql`${tasks.body} LIKE ${pattern} ESCAPE '\\'`,
+				),
+			)
+			.orderBy(desc(tasks.updatedAt))
+			.limit(RECENT_LIMIT * 4);
+	} else {
+		const recent = await db
+			.select({ taskId: events.entityId, at: sql<string>`max(${events.at})` })
+			.from(events)
+			.where(eq(events.entity, "task"))
+			.groupBy(events.entityId)
+			.orderBy(desc(sql`max(${events.at})`))
+			.limit(RECENT_LIMIT);
+		rows = [];
+		for (const ids of chunked(recent.map((r) => r.taskId))) {
+			rows.push(
+				...(await db.select().from(tasks).where(inArray(tasks.id, ids))),
+			);
+		}
+	}
+	const ids = rows.map((r) => r.id);
+	const [activity, pairs] = await Promise.all([
+		lastActivity(db, ids),
+		labelPairs(db, ids),
+	]);
+	return newestFirst(
+		withLabels(rows, pairs).map((r) => ({
+			...r,
+			activity: activity.get(r.id) ?? r.updatedAt,
+		})),
+	).slice(0, RECENT_LIMIT);
+};
+
 /** 一覧の切り替えに出す件数 */
 export const loadCounts = async (db: Db) => {
 	const rows = await db
 		.select({ state: tasks.state, count: sql<number>`count(*)` })
 		.from(tasks)
-		.where(inArray(tasks.state, ["review", "doing"]))
+		.where(inArray(tasks.state, ["review", "todo", "doing"]))
 		.groupBy(tasks.state);
 	const of = (state: TaskState) =>
 		rows.find((r) => r.state === state)?.count ?? 0;
 	return {
 		review: of("review"),
+		todo: of("todo"),
 		doing: of("doing"),
 		triage: await countTriage(db),
 	};

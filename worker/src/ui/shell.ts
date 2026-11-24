@@ -4,12 +4,15 @@ import { html, Markup } from "./html.ts";
 export type Nav = {
 	review: number;
 	triage: number;
+	todo: number;
 	doing: number;
 	/** 直近の同期の警告の数 */
 	syncWarnings: number;
+	/** 一覧の画面でないときに左ペインに出す一覧。どの画面でも左ペインの形を変えないため */
+	side?: Markup;
 };
 
-export type Section = "review" | "triage" | "doing" | "more";
+export type Section = "review" | "triage" | "todo" | "doing" | "more";
 
 /**
  * スマホでどちらのペインを見せるか。list は一覧、detail はタスク、page はそれ以外の画面。
@@ -39,9 +42,15 @@ h1,h2,h3{margin:0;line-height:1.4}
 .muted{color:var(--muted)}
 .app{display:grid;grid-template-columns:300px minmax(0,1fr);height:100dvh}
 .side{display:flex;flex-direction:column;min-height:0;background:var(--surface);border-right:1px solid var(--line)}
-.switch{flex:none;height:64px;padding:0 12px;display:flex;align-items:center;border-bottom:1px solid var(--line)}
-.switch nav{flex:1;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:2px;padding:3px;border-radius:10px;background:var(--sunken)}
-.switch a{display:flex;justify-content:center;align-items:center;gap:5px;height:32px;border-radius:8px;color:var(--muted);font-size:13px;white-space:nowrap}
+.topnav{flex:none;height:44px;padding:0 12px 0 20px;display:flex;align-items:center;gap:2px;border-bottom:1px solid var(--line);font-size:13px}
+.topnav .brand{flex:none;font-weight:700;margin-right:auto}
+.topnav a{flex:none;padding:6px 6px;border-radius:6px;color:var(--muted);white-space:nowrap}
+.topnav a:hover{text-decoration:none;background:var(--sunken);color:var(--ink)}
+.topnav a[aria-current]{color:var(--ink);font-weight:600;background:var(--sunken)}
+.topnav .warn{color:var(--alert-ink);font-size:11px;margin-left:4px}
+.switch{flex:none;height:52px;padding:0 12px;display:flex;align-items:center;border-bottom:1px solid var(--line)}
+.switch nav{flex:1;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:2px;padding:3px;border-radius:10px;background:var(--sunken)}
+.switch a{display:flex;justify-content:center;align-items:center;gap:4px;height:32px;border-radius:8px;color:var(--muted);font-size:12px;white-space:nowrap}
 .switch a:hover{text-decoration:none;color:var(--ink)}
 .switch a[aria-current]{background:var(--surface);color:var(--ink);font-weight:600;box-shadow:0 0 0 1px var(--line)}
 .count{font-variant-numeric:tabular-nums}
@@ -57,14 +66,16 @@ h1,h2,h3{margin:0;line-height:1.4}
 .item .lead{font-size:15px;font-weight:600;line-height:1.5}
 .item .sub{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .empty{padding:20px;color:var(--muted);font-size:14px}
+.search{flex:none;padding:10px 12px;border-bottom:1px solid var(--line)}
+.search input{width:100%;height:34px;padding:0 10px;border:1px solid var(--line-strong);border-radius:8px;background:var(--paper)}
+.toast{flex:none;display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px;margin:10px 28px 0;padding:10px 14px;border-radius:10px;background:var(--ink);color:var(--paper);font-size:14px}
+.toast .what{flex:1 1 200px;min-width:0}
+.toast a{color:var(--paper);text-decoration:underline}
+.toast button{padding:4px 10px;border:1px solid var(--paper);border-radius:6px;background:transparent;color:var(--paper);font-size:13px}
 .menu{display:flex;flex-direction:column;padding:8px 0}
 .menu a{padding:10px 20px;color:var(--ink)}
 .menu a[aria-current]{font-weight:600;box-shadow:inset 3px 0 0 var(--matcha)}
 .menu .warn{color:var(--alert-ink);font-size:12px;margin-left:6px}
-.foot{flex:none;height:44px;padding:0 20px;display:flex;align-items:center;gap:16px;border-top:1px solid var(--line);font-size:13px}
-.foot .brand{font-weight:700}
-.foot a{color:var(--muted)}
-.foot a[aria-current]{color:var(--ink);font-weight:600}
 .main{display:flex;flex-direction:column;min-width:0;min-height:0;background:var(--paper)}
 .tabbar{display:none}
 .alert{background:var(--alert-bg);color:var(--alert-ink);border-radius:8px;padding:10px 12px;margin:12px 0}
@@ -192,7 +203,7 @@ form .checks{display:flex;flex-wrap:wrap;gap:4px 14px}
 @media (max-width:860px){
 .app{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr) auto}
 .pane-list .main,.pane-detail .side,.pane-page .side{display:none}
-.switch,.foot,.listbar .desk{display:none}
+.topnav,.switch,.listbar .desk{display:none}
 .desk{display:none !important}
 .ltitle{display:block}
 .back{display:flex}
@@ -216,7 +227,8 @@ form .checks{display:flex;flex-wrap:wrap;gap:4px 14px}
 .side{border-right:0}
 .pane-list .item[aria-current]{background:none;box-shadow:none}
 .doc{padding:16px 16px 32px}
-.tabbar{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));border-top:1px solid var(--line);background:var(--surface);padding:4px 0 env(safe-area-inset-bottom)}
+.toast{margin:8px 16px 0}
+.tabbar{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));border-top:1px solid var(--line);background:var(--surface);padding:4px 0 env(safe-area-inset-bottom)}
 .tabbar a{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;min-height:52px;font-size:11px;color:var(--muted);white-space:nowrap}
 .tabbar a:hover{text-decoration:none}
 .tabbar a[aria-current]{color:var(--matcha);font-weight:600}
@@ -242,6 +254,12 @@ const TABS: { section: Section; label: string; href: string; icon: string }[] =
 			label: "Triage",
 			href: "/triage",
 			icon: '<path d="M3 7h18M6 12h12M10 17h4"></path>',
+		},
+		{
+			section: "todo",
+			label: "Todo",
+			href: "/todo",
+			icon: '<path d="M8 6h13M8 12h13M8 18h13"></path><path d="M3 6h.01M3 12h.01M3 18h.01"></path>',
 		},
 		{
 			section: "doing",
@@ -276,9 +294,10 @@ const tabbar = (nav: Nav, section: Section) =>
 		return html`<a href="${t.href}"${current(t.section === section)}>${icon(t.icon)}<span>${t.label}${n === null ? "" : html` <span class="count">${n}</span>`}</span></a>`;
 	})}</nav>`;
 
-export type MoreItem = "projects" | "sync" | "settings";
+export type MoreItem = "recent" | "projects" | "sync" | "settings";
 
 const MORE: { item: MoreItem; label: string; href: string }[] = [
+	{ item: "recent", label: "Recent", href: "/recent" },
 	{ item: "projects", label: "プロジェクト", href: "/projects" },
 	{ item: "sync", label: "同期", href: "/sync" },
 	{ item: "settings", label: "設定", href: "/settings" },
@@ -289,16 +308,14 @@ const syncWarning = (nav: Nav) =>
 		? html`<span class="warn">警告 ${nav.syncWarnings}</span>`
 		: "";
 
-/** More の画面では左ペインに同じリンクが並ぶので、下の帯には出さない */
-const foot = (nav: Nav, section: Section, item?: MoreItem) =>
-	html`<div class="foot"><span class="brand">chakai</span>${(
-		section === "more" ? [] : MORE
-	).map(
+/** 左ペインの一番上の段。画面の隅はブラウザのリンク先の表示と重なるので、上に置く */
+const top = (nav: Nav, item?: MoreItem) =>
+	html`<nav class="topnav" aria-label="その他"><span class="brand">chakai</span>${MORE.map(
 		(m) =>
 			html`<a href="${m.href}"${current(m.item === item)}>${m.label}${m.item === "sync" ? syncWarning(nav) : ""}</a>`,
-	)}</div>`;
+	)}</nav>`;
 
-/** More の中身。Mac では一覧の代わりに左ペインに、スマホでは画面いっぱいに出す */
+/** スマホの More の中身 */
 export const moreMenu = (nav: Nav, item?: MoreItem) =>
 	html`<nav class="menu" aria-label="その他">${MORE.map(
 		(m) =>
@@ -327,7 +344,7 @@ export const page = (s: Shell): string =>
 </head>
 <body class="pane-${s.pane}">
 <div class="app">
-<aside class="side">${switcher(s.nav, s.section)}${s.side}${foot(s.nav, s.section, s.more)}</aside>
+<aside class="side">${top(s.nav, s.more)}${switcher(s.nav, s.section)}${s.side}</aside>
 <main class="main"><p id="alert" class="alert" role="alert" hidden></p>${s.main}</main>
 ${tabbar(s.nav, s.section)}
 </div>

@@ -6,8 +6,10 @@ import { SYNC_ACTOR_ID } from "../sync.ts";
 import type {
 	DoingRow,
 	ProjectRow,
+	RecentRow,
 	ReviewRow,
 	TaskView,
+	TodoRow,
 	TriageRow,
 } from "./data.ts";
 import { html, type Markup } from "./html.ts";
@@ -32,12 +34,14 @@ import {
 } from "./pages.ts";
 import { type Nav, page } from "./shell.ts";
 
-export type ListKind = "review" | "triage" | "doing";
+export type ListKind = "review" | "triage" | "todo" | "doing" | "recent";
 
 export const LIST_HREF: Record<ListKind, string> = {
 	review: "/",
 	triage: "/triage",
+	todo: "/todo",
 	doing: "/doing",
+	recent: "/recent",
 };
 
 export const taskHref = (id: string, from: ListKind) =>
@@ -46,13 +50,17 @@ export const taskHref = (id: string, from: ListKind) =>
 const LIST_TITLE: Record<ListKind, string> = {
 	review: "Review",
 	triage: "Triage",
+	todo: "Todo",
 	doing: "Doing",
+	recent: "Recent",
 };
 
 const LIST_ORDER: Record<ListKind, string> = {
 	review: "動きの新しい順",
 	triage: "起票の古い順",
+	todo: "AI が拾う順",
 	doing: "動きの新しい順",
+	recent: "動きの新しい順",
 };
 
 const timeAgo = (iso: string, now: Date) =>
@@ -85,7 +93,9 @@ const pullSummary = (link: Link) => {
 export type ListRows =
 	| { kind: "review"; rows: ReviewRow[] }
 	| { kind: "triage"; rows: TriageRow[] }
-	| { kind: "doing"; rows: DoingRow[] };
+	| { kind: "todo"; rows: TodoRow[] }
+	| { kind: "doing"; rows: DoingRow[] }
+	| { kind: "recent"; rows: RecentRow[]; q: string | null };
 
 const itemsOf = (
 	list: ListRows,
@@ -114,6 +124,24 @@ const itemsOf = (
 					? `「${r.discoveredFrom[0].title}」の作業中に見つけた`
 					: "",
 			}));
+		case "todo":
+			return list.rows.map((r) => ({
+				id: r.id,
+				project: projectName(r.projectId),
+				who: r.assigneeId ? nameOf(names, r.assigneeId) : "担当なし",
+				at: r.updatedAt,
+				lead: r.title,
+				sub: r.parentTitle ? `親: ${r.parentTitle}` : "",
+			}));
+		case "recent":
+			return list.rows.map((r) => ({
+				id: r.id,
+				project: projectName(r.projectId),
+				who: r.state,
+				at: r.activity,
+				lead: r.title,
+				sub: r.state === "review" ? (r.waitingOn ?? "") : "",
+			}));
 		case "doing":
 			return list.rows.map((r) => ({
 				id: r.id,
@@ -136,8 +164,14 @@ const itemsOf = (
 const EMPTY_LIST: Record<ListKind, string> = {
 	review: "判断を待っているタスクは無い。",
 	triage: "仕分けを待っているタスクは無い。",
+	todo: "次にやるタスクは無い。",
 	doing: "作業中のタスクは無い。",
+	recent: "当てはまるタスクは無い。",
 };
+
+/** Recent の検索欄。form の送信は CSP で止まるので、script が URL を組んで開く */
+const searchBox = (q: string | null) =>
+	html`<form class="search" role="search" data-search><input type="search" name="q" value="${q ?? ""}" placeholder="件名と本文を探す" aria-label="件名と本文を探す" enterkeyhint="search"></form>`;
 
 export const listPane = (
 	list: ListRows,
@@ -147,7 +181,7 @@ export const listPane = (
 	selected: string | null,
 ) => {
 	const items = itemsOf(list, projects, names);
-	return html`<h1 class="ltitle phone">${LIST_TITLE[list.kind]} <span class="muted">${items.length}</span></h1><div class="listbar"><span>${items.length} 件</span><span>${LIST_ORDER[list.kind]}</span></div>
+	return html`<h1 class="ltitle phone">${LIST_TITLE[list.kind]} <span class="muted">${items.length}</span></h1>${list.kind === "recent" ? searchBox(list.q) : ""}<div class="listbar"><span>${items.length} 件</span><span>${LIST_ORDER[list.kind]}</span></div>
 <div class="list">${
 		items.length === 0
 			? html`<p class="empty">${EMPTY_LIST[list.kind]}</p>`
@@ -341,7 +375,7 @@ const triageButtons = (id: string, next: string) =>
 const REPLY_HINT = "空のまま Reply すると「それで進めて」と返す";
 
 const composer = (d: Detail) =>
-	html`<li class="ev composer desk">${avatar("owner")}<form id="reply-desk" class="bubble" data-reply="${d.view.task.id}" data-next="${d.next}"><label class="bh" for="answer-desk">返事 <span class="muted">${REPLY_HINT}</span></label><textarea id="answer-desk" name="answer" rows="3" maxlength="2000"></textarea></form></li>`;
+	html`<li class="ev composer desk">${avatar("owner")}<form id="reply-desk" class="bubble" data-reply="${d.view.task.id}" data-next="${d.next}" data-question="${d.view.lastReview?.question ?? d.view.task.waitingOn ?? ""}"><label class="bh" for="answer-desk">返事 <span class="muted">${REPLY_HINT}</span></label><textarea id="answer-desk" name="answer" rows="3" maxlength="2000"></textarea></form></li>`;
 
 const metaRow = (label: string, body: Markup | string) =>
 	html`<div class="mrow"><span class="mlabel">${label}</span><div>${body}</div></div>`;
@@ -501,7 +535,7 @@ ${metaColumn(d, names)}
 </div>
 ${
 	reviewing
-		? html`<form class="bar phone" data-reply="${task.id}" data-next="${d.next}"><p class="ask">${question}</p><label class="sr" for="answer-phone">返事</label><textarea id="answer-phone" name="answer" rows="2" maxlength="2000" placeholder="${REPLY_HINT}"></textarea><div class="buttons">${replyButtons(resume)}</div></form>`
+		? html`<form class="bar phone" data-reply="${task.id}" data-next="${d.next}" data-question="${question}"><p class="ask">${question}</p><label class="sr" for="answer-phone">返事</label><textarea id="answer-phone" name="answer" rows="2" maxlength="2000" placeholder="${REPLY_HINT}"></textarea><div class="buttons">${replyButtons(resume)}</div></form>`
 		: d.awaitingTriage
 			? html`<div class="bar phone"><div class="buttons">${triageButtons(task.id, d.next)}</div></div>`
 			: ""
@@ -511,7 +545,9 @@ ${
 const BLANK: Record<ListKind, string> = {
 	review: "あなたの判断を待っているタスクは無い。",
 	triage: "仕分けを待っているタスクは無い。",
+	todo: "次にやるタスクは無い。",
 	doing: "作業中のタスクは無い。",
+	recent: "当てはまるタスクは無い。",
 };
 
 export const blankPane = (kind: ListKind, nav: Nav) => {
@@ -537,7 +573,8 @@ export const renderInbox = (s: {
 	page({
 		title: s.detail ? s.detail.view.task.title : LIST_TITLE[s.list.kind],
 		nav: s.nav,
-		section: s.list.kind,
+		section: s.list.kind === "recent" ? "more" : s.list.kind,
+		more: s.list.kind === "recent" ? "recent" : undefined,
 		pane: s.pane,
 		side: listPane(
 			s.list,

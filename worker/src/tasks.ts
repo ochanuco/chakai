@@ -142,7 +142,7 @@ const createdByAgent = (db: Db) =>
 export const awaitingTriage = (db: Db) =>
 	and(eq(tasks.state, "backlog"), isNull(tasks.triagedAt), createdByAgent(db));
 
-const escapeLike = (s: string) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
+export const escapeLike = (s: string) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
 
 export const searchTasks = async (
 	db: Db,
