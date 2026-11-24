@@ -487,7 +487,7 @@ describe("画面", () => {
 
 		const { status, body } = await text(`/tasks/${task.id}`);
 		expect(status).toBe(200);
-		expect(body).toContain("本文の 1 行目\n2 行目");
+		expect(body).toContain("本文の 1 行目<br>2 行目");
 		expect(body).toContain(`<a href="/tasks/${parent.id}">親の件名</a>`);
 		expect(body).toContain("孫の件名");
 		expect(body).toContain(
@@ -510,7 +510,7 @@ describe("画面", () => {
 		expect(question).toContain('<span class="via">ブラウザ</span>');
 		expect(question).toContain('<p class="bt">進めてよいか</p>');
 		expect(question).toContain(
-			'<p class="bt note">&lt;b&gt;方針&lt;/b&gt;を決めた</p>',
+			'<div class="bt md note"><p>&lt;b&gt;方針&lt;/b&gt;を決めた</p></div>',
 		);
 		// 新しいものを上に出し、order=asc で古い順にする
 		expect(timeline.indexOf("並びを変えた")).toBeLessThan(

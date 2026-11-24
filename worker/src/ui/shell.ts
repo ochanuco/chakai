@@ -116,6 +116,18 @@ progress{width:5em;height:.5em;vertical-align:middle;accent-color:var(--matcha)}
 .bubble{flex:1;min-width:0;background:var(--surface);border:1px solid var(--line);border-radius:10px}
 .bh{display:flex;flex-wrap:wrap;justify-content:space-between;gap:4px 12px;padding:8px 14px;border-bottom:1px solid var(--line);background:var(--sunken);border-radius:10px 10px 0 0;font-size:13px}
 .bt{margin:0;padding:12px 14px;white-space:pre-wrap;line-height:1.75}
+.md{white-space:normal}
+.md>:first-child{margin-top:0}
+.md>:last-child{margin-bottom:0}
+.md p,.md ul,.md ol,.md pre,.md blockquote{margin:0 0 10px}
+.md h3{font-size:15px;margin:16px 0 6px}
+.md h4{font-size:14px;margin:14px 0 4px}
+.md ul,.md ol{padding-left:1.4em}
+.md li{margin:2px 0}
+.md code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.88em;background:var(--sunken);border-radius:4px;padding:1px 4px}
+.md pre{background:var(--sunken);border-radius:6px;padding:10px 12px;overflow-x:auto}
+.md pre code{background:none;padding:0;white-space:pre}
+.md blockquote{border-left:3px solid var(--line-strong);padding-left:10px;color:var(--muted)}
 .bubble details{padding:0 14px 12px;font-size:13px}
 .bubble pre,.ev.line pre{white-space:pre-wrap;margin:4px 0;padding:8px;background:var(--sunken);border-radius:6px;font:inherit;font-size:13px}
 .when{display:inline-flex;gap:8px;color:var(--muted);font-size:12px;white-space:nowrap}

@@ -11,6 +11,7 @@ import type {
 	TriageRow,
 } from "./data.ts";
 import { html, type Markup } from "./html.ts";
+import { markdown } from "./markdown.ts";
 import {
 	ago,
 	badge,
@@ -312,7 +313,7 @@ const when = (e: Entry, now: Date) =>
 const entryItem = (e: Entry, now: Date) =>
 	e.kind === "line"
 		? html`<li class="ev line"><span class="dot" aria-hidden="true"></span><span class="what"><b>${e.actor}</b> が${e.what}</span>${when(e, now)}${e.detail ?? ""}</li>`
-		: html`<li class="ev ${e.kind}">${avatar(e.actor)}<div class="bubble"><div class="bh"><span><b>${e.actor}</b> が${e.what}</span>${when(e, now)}</div>${e.text ? html`<p class="bt">${e.text}</p>` : ""}${e.note ? html`<p class="bt note">${e.note}</p>` : ""}${e.detail ?? ""}</div></li>`;
+		: html`<li class="ev ${e.kind}">${avatar(e.actor)}<div class="bubble"><div class="bh"><span><b>${e.actor}</b> が${e.what}</span>${when(e, now)}</div>${e.text ? (e.kind === "question" ? html`<p class="bt">${e.text}</p>` : html`<div class="bt md">${markdown(e.text)}</div>`) : ""}${e.note ? html`<div class="bt md note">${markdown(e.note)}</div>` : ""}${e.detail ?? ""}</div></li>`;
 
 export type Order = "desc" | "asc";
 
@@ -480,7 +481,7 @@ ${reviewing ? html`<div class="actions desk">${replyButtons(resume, "reply-desk"
 ${chips(d, names)}
 <div class="body">
 <div class="conv">
-<article class="ev say opening">${avatar(nameOf(names, task.createdBy))}<div class="bubble"><div class="bh"><span><b>${nameOf(names, task.createdBy)}</b> が起票した</span><span class="when">${timeAgo(task.createdAt, d.now)}${created ? html`<span class="via">${via(created)}</span>` : ""}</span></div>${task.body ? html`<p class="bt fold" data-fold>${task.body}</p><button type="button" class="unfold" data-unfold hidden>全文を読む</button>` : html`<p class="bt muted">本文は無い。</p>`}</div></article>
+<article class="ev say opening">${avatar(nameOf(names, task.createdBy))}<div class="bubble"><div class="bh"><span><b>${nameOf(names, task.createdBy)}</b> が起票した</span><span class="when">${timeAgo(task.createdAt, d.now)}${created ? html`<span class="via">${via(created)}</span>` : ""}</span></div>${task.body ? html`<div class="bt md fold" data-fold>${markdown(task.body)}</div><button type="button" class="unfold" data-unfold hidden>全文を読む</button>` : html`<p class="bt muted">本文は無い。</p>`}</div></article>
 ${
 	d.view.children.length > 0
 		? html`<section class="children"><h2>子タスク</h2>${d.view.children.map(
