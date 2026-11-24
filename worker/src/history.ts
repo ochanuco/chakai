@@ -77,9 +77,12 @@ export const chunked = <T>(items: T[], size = IDS_PER_QUERY): T[][] =>
 		items.slice(i * size, (i + 1) * size),
 	);
 
-/** いまの review に入った時刻と、入る前の状態を、タスクごとに返す。最後に state を review にした履歴から取る */
+/** いまの review に入った時刻と、入る前の状態と、review にした actor を、タスクごとに返す。最後に state を review にした履歴から取る */
 export const reviewSince = async (db: Db, taskIds: string[]) => {
-	const since = new Map<string, { at: string; from: TaskState | null }>();
+	const since = new Map<
+		string,
+		{ at: string; from: TaskState | null; by: string }
+	>();
 	for (const ids of chunked(taskIds)) {
 		// SQLite は max() と並べた列を、max の行の値で返す
 		const rows = await db
@@ -87,6 +90,7 @@ export const reviewSince = async (db: Db, taskIds: string[]) => {
 				taskId: events.entityId,
 				at: sql<string>`max(${events.at})`,
 				before: events.before,
+				by: events.actorId,
 			})
 			.from(events)
 			.where(
@@ -100,7 +104,11 @@ export const reviewSince = async (db: Db, taskIds: string[]) => {
 			)
 			.groupBy(events.entityId);
 		for (const r of rows) {
-			since.set(r.taskId, { at: r.at, from: asState(decode(r.before)) });
+			since.set(r.taskId, {
+				at: r.at,
+				from: asState(decode(r.before)),
+				by: r.by,
+			});
 		}
 	}
 	return since;

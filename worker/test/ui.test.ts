@@ -248,7 +248,11 @@ describe("画面", () => {
 		const first = await newTask(a.id, { title: "先に仰いだ" });
 		const second = await newTask(b.id, { title: "後に仰いだ" });
 		await patch(first.id, { state: "review", waiting_on: "案 A でよいか" });
-		await patch(second.id, { state: "review", waiting_on: "案 B でよいか" });
+		await patch(
+			second.id,
+			{ state: "review", waiting_on: "案 B でよいか" },
+			working("yukarin"),
+		);
 		await newTask(a.id, { title: "仰いでいない" });
 
 		const list = sideOf((await text("/")).body);
@@ -259,6 +263,13 @@ describe("画面", () => {
 		);
 		expect(list).not.toContain("仰いでいない");
 		expect(list).toContain(`href="/tasks/${first.id}?from=review"`);
+		// 行には、担当や起票者ではなく、review にした actor を出す
+		expect(pieceOf(list, '<a class="item"', "案 B でよいか")).toContain(
+			"<span>Yukarin</span>",
+		);
+		expect(pieceOf(list, '<a class="item"', "案 A でよいか")).toContain(
+			"<span>Owner</span>",
+		);
 		expect(list).toMatch(
 			/<time datetime="[^"]+" title="\d{4}-\d{2}-\d{2} \d{2}:\d{2}">たった今<\/time>/,
 		);

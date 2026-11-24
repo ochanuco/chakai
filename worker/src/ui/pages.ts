@@ -388,7 +388,7 @@ export const renderProject = (
 	return doc(
 		project.name,
 		html`<h1>${project.name}</h1>
-${project.description ? html`<p class="body muted">${project.description}</p>` : ""}
+${project.description ? html`<p class="body-text muted">${project.description}</p>` : ""}
 ${view.repos.length > 0 ? html`<p class="muted">repo: ${view.repos.join("、")}</p>` : ""}
 ${linkSections(view.links, now)}
 <div class="chips">${chip("進行中", ACTIVE_STATES)}${chip("すべて", [...TASK_STATES], tasks.length)}</div>

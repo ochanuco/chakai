@@ -97,7 +97,7 @@ const itemsOf = (
 			return list.rows.map((r) => ({
 				id: r.id,
 				project: projectName(r.projectId),
-				who: nameOf(names, r.assigneeId ?? r.createdBy),
+				who: nameOf(names, r.askedBy),
 				at: r.activity,
 				lead: r.waitingOn ?? r.title,
 				sub: r.title,
@@ -468,7 +468,12 @@ export const detailPane = (d: Detail) => {
 	const question = lastReview?.question ?? task.waitingOn ?? "";
 	const created = d.history.find((e) => e.field === "created");
 	return html`<header class="head">
-<a class="back phone" href="${LIST_HREF[d.from]}" aria-label="${LIST_TITLE[d.from]} の一覧へ戻る"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M15 5l-7 7 7 7"></path></svg></a>
+${
+	// Triage はスマホで一覧を持たず 1 件ずつ捌くので、戻る先が無い
+	d.from === "triage"
+		? ""
+		: html`<a class="back phone" href="${LIST_HREF[d.from]}" aria-label="${LIST_TITLE[d.from]} の一覧へ戻る"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M15 5l-7 7 7 7"></path></svg></a>`
+}
 <div class="titles"><h1>${task.title}</h1><div class="line">${badge(task.state)}<span class="crumbs"><a href="/projects/${project.id}">${project.name}</a>${ancestors.map((a) => html` › <a href="/tasks/${a.id}">${a.title}</a>`)}</span><span>${subline(d, names)}</span></div></div>
 ${reviewing ? html`<div class="actions desk">${replyButtons(resume, "reply-desk")}</div>` : d.awaitingTriage ? html`<div class="actions desk">${triageButtons(task.id, d.next)}</div>` : ""}
 </header>

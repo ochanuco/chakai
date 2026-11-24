@@ -184,6 +184,7 @@ form .checks{display:flex;flex-wrap:wrap;gap:4px 14px}
 .back{display:flex}
 .head{padding:6px 12px 8px 4px;min-height:0;align-items:flex-start}
 .titles{padding-top:8px}
+.head>.titles:first-child{padding-left:12px}
 .titles h1{white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;font-size:16px}
 .tchips{display:flex;flex:none;overflow-x:auto;gap:6px;padding:8px 16px;border-bottom:1px solid var(--line);background:var(--surface)}
 .body{flex-direction:column;align-items:stretch}
@@ -197,6 +198,8 @@ form .checks{display:flex;flex-wrap:wrap;gap:4px 14px}
 .bar .buttons .quiet{flex:1;text-align:left;padding-left:4px}
 .bar .buttons .primary{flex:none;width:180px}
 .item{padding:14px 16px}
+.side{border-right:0}
+.pane-list .item[aria-current]{background:none;box-shadow:none}
 .doc{padding:16px 16px 32px}
 .tabbar{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));border-top:1px solid var(--line);background:var(--surface);padding:4px 0 env(safe-area-inset-bottom)}
 .tabbar a{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;min-height:52px;font-size:11px;color:var(--muted);white-space:nowrap}

@@ -101,6 +101,8 @@ const newestFirst = <T extends { activity: string }>(rows: T[]) =>
 export type ReviewRow = TaskRow & {
 	since: string;
 	from: TaskState | null;
+	/** review にした actor。履歴に無ければ起票した actor */
+	askedBy: string;
 	activity: string;
 };
 
@@ -119,6 +121,7 @@ export const loadReviews = async (db: Db): Promise<ReviewRow[]> => {
 				...r,
 				since: entered?.at ?? r.updatedAt,
 				from: entered?.from ?? null,
+				askedBy: entered?.by ?? r.createdBy,
 				activity: activity.get(r.id) ?? r.updatedAt,
 			};
 		}),
