@@ -1,10 +1,14 @@
+import { eq } from "drizzle-orm";
+import type { Db } from "../db/client.ts";
+import { tasks } from "../db/schema.ts";
 import { listTaskEvents } from "../history.ts";
 import type { RestContext } from "../rest.ts";
 import { isOwnerLogin, listActors, listLabels } from "../roster.ts";
 import { listSyncRuns } from "../sync.ts";
 import { CLIENT_JS } from "./client.ts";
 import {
-	countTriage,
+	loadCounts,
+	loadDoing,
 	loadProject,
 	loadProjects,
 	loadReviews,
@@ -12,18 +16,27 @@ import {
 	loadStateCounts,
 	loadTask,
 	loadTriage,
+	type TriageRow,
 } from "./data.ts";
+import {
+	type Detail,
+	type ListKind,
+	type ListRows,
+	nextHref,
+	type Order,
+	renderInbox,
+} from "./inbox.ts";
 import {
 	actorNames,
 	parseStates,
-	renderHome,
+	renderMore,
 	renderNotFound,
 	renderProject,
+	renderProjects,
 	renderSettings,
 	renderSync,
-	renderTask,
-	renderTriage,
 } from "./pages.ts";
+import type { Nav } from "./shell.ts";
 
 const HEADERS = {
 	"cache-control": "no-store",
@@ -37,6 +50,58 @@ const page = (body: string, status = 200) =>
 		status,
 		headers: { ...HEADERS, "content-type": "text/html; charset=utf-8" },
 	});
+
+const LIST_KINDS: ListKind[] = ["review", "triage", "doing"];
+
+const loadList = async (db: Db, kind: ListKind): Promise<ListRows> => {
+	switch (kind) {
+		case "review":
+			return { kind, rows: await loadReviews(db) };
+		case "triage":
+			return { kind, rows: await loadTriage(db) };
+		case "doing":
+			return { kind, rows: await loadDoing(db) };
+	}
+};
+
+/** 一覧から開いていないときは、タスクの今の状態から一覧を選ぶ */
+const listOfTask = (
+	param: string | null,
+	state: string,
+	awaitingTriage: boolean,
+): ListKind => {
+	if (LIST_KINDS.includes(param as ListKind)) return param as ListKind;
+	if (awaitingTriage) return "triage";
+	return state === "doing" ? "doing" : "review";
+};
+
+const loadDetail = async (
+	db: Db,
+	taskId: string,
+	list: ListRows,
+	order: Order,
+	now: Date,
+	triageIds: Set<string>,
+): Promise<Detail | null> => {
+	const [view, history, actors, labels] = await Promise.all([
+		loadTask(db, taskId),
+		listTaskEvents(db, taskId),
+		listActors(db),
+		listLabels(db),
+	]);
+	if (!view || !history.ok) return null;
+	return {
+		view,
+		history: history.value,
+		actors,
+		labels,
+		now,
+		from: list.kind,
+		order,
+		next: nextHref(list, taskId),
+		awaitingTriage: triageIds.has(taskId),
+	};
+};
 
 /** owner の画面。読み取りは REST と同じ関数で行い、書き込みは script が REST を呼ぶ */
 export const handleUi = async (
@@ -64,43 +129,80 @@ export const handleUi = async (
 			},
 		});
 	}
-	const runs = await listSyncRuns(db);
-	const nav = {
-		triage: await countTriage(db),
-		syncWarnings: runs[0]?.warnings.length ?? 0,
-	};
+	const [runs, counts] = await Promise.all([listSyncRuns(db), loadCounts(db)]);
+	const nav: Nav = { ...counts, syncWarnings: runs[0]?.warnings.length ?? 0 };
 	if (request.method !== "GET" || rest.length > 0) {
 		return page(renderNotFound(nav), 404);
 	}
 	const now = new Date();
+	const order: Order = url.searchParams.get("order") === "asc" ? "asc" : "desc";
 
-	if (section === undefined) {
-		const [reviews, projects, counts, actors] = await Promise.all([
-			loadReviews(db),
+	const inbox = async (
+		kind: ListKind,
+		taskId?: string,
+		loadedTriage?: TriageRow[],
+	) => {
+		const [list, projects, actors, triage] = await Promise.all([
+			loadList(db, kind),
 			loadProjects(db),
-			loadStateCounts(db),
 			listActors(db),
+			kind === "triage" ? null : (loadedTriage ?? loadTriage(db)),
 		]);
+		const triageIds = new Set(
+			(list.kind === "triage" ? list.rows : (triage ?? [])).map((r) => r.id),
+		);
+		// 数えた後に一覧が増減していても、切り替えの件数と一覧の件数が食い違わないようにする
+		const shown: Nav = { ...nav, [kind]: list.rows.length };
+		const selected = taskId ?? list.rows[0]?.id;
+		const detail = selected
+			? await loadDetail(db, selected, list, order, now, triageIds)
+			: null;
+		if (taskId && !detail) return page(renderNotFound(shown), 404);
 		return page(
-			renderHome(
-				{ reviews, projects, counts, names: actorNames(actors), now },
-				nav,
+			renderInbox({
+				list,
+				projects,
+				names: actorNames(actors),
+				now,
+				nav: shown,
+				detail,
+				// Triage は 1 件ずつ捌くので、スマホでも先頭のタスクから見せる
+				pane: taskId || (kind === "triage" && detail) ? "detail" : "list",
+			}),
+		);
+	};
+
+	if (section === undefined) return inbox("review");
+	if ((section === "triage" || section === "doing") && !id) {
+		return inbox(section);
+	}
+	if (section === "tasks" && id) {
+		const [[task], triage] = await Promise.all([
+			db
+				.select({ state: tasks.state })
+				.from(tasks)
+				.where(eq(tasks.id, id))
+				.limit(1),
+			loadTriage(db),
+		]);
+		if (!task) return page(renderNotFound(nav), 404);
+		return inbox(
+			listOfTask(
+				url.searchParams.get("from"),
+				task.state,
+				triage.some((t) => t.id === id),
 			),
+			id,
+			triage,
 		);
 	}
-	if (section === "triage" && !id) {
-		const [rows, projects, actors] = await Promise.all([
-			loadTriage(db),
+	if (section === "more" && !id) return page(renderMore(nav));
+	if (section === "projects" && !id) {
+		const [projects, stateCounts] = await Promise.all([
 			loadProjects(db),
-			listActors(db),
+			loadStateCounts(db),
 		]);
-		// 数えた後に仕分け待ちが増減していても、見出しとナビゲーションの件数が食い違わないようにする
-		return page(
-			renderTriage(
-				{ rows, projects, names: actorNames(actors), now },
-				{ ...nav, triage: rows.length },
-			),
-		);
+		return page(renderProjects({ projects, counts: stateCounts }, nav));
 	}
 	if (section === "sync" && !id) {
 		return page(renderSync(runs, actorNames(await listActors(db)), now, nav));
@@ -120,16 +222,6 @@ export const handleUi = async (
 				nav,
 			),
 		);
-	}
-	if (section === "tasks" && id) {
-		const view = await loadTask(db, id);
-		const history = await listTaskEvents(db, id);
-		if (!view || !history.ok) return page(renderNotFound(nav), 404);
-		const [actors, labels] = await Promise.all([
-			listActors(db),
-			listLabels(db),
-		]);
-		return page(renderTask(view, history.value, actors, labels, now, nav));
 	}
 	return page(renderNotFound(nav), 404);
 };

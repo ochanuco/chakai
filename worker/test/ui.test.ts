@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
 import { beforeAll, describe, expect, it } from "vitest";
-import { renderTriage } from "../src/ui/pages.ts";
+import { renderInbox } from "../src/ui/inbox.ts";
 import {
 	type As,
 	call,
@@ -36,6 +36,9 @@ describe("画面を開ける人", () => {
 		"/",
 		"/assets/app.js",
 		"/triage",
+		"/doing",
+		"/more",
+		"/projects",
 		"/settings",
 		"/projects/x",
 		"/tasks/x",
@@ -221,27 +224,66 @@ describe("読み取りの REST", () => {
 	});
 });
 
+/** 左ペイン（一覧）の HTML */
+const sideOf = (body: string) =>
+	body.slice(body.indexOf('<aside class="side">'), body.indexOf("<main"));
+
+/** タスクの会話の時系列の HTML */
+const timelineOf = (body: string) => {
+	const start = body.indexOf('<ol class="timeline">');
+	return body.slice(start, body.indexOf("</ol>", start));
+};
+
+/** タスクの右の列の HTML */
+const metaOf = (body: string) =>
+	body.slice(
+		body.indexOf('<aside class="meta"'),
+		body.indexOf('<details class="edit">'),
+	);
+
 describe("画面", () => {
-	it("owner の番に、プロジェクトをまたいで review を並べる", async () => {
+	it("Review の一覧に、プロジェクトをまたいで review を、最後に動いた新しい順に並べる", async () => {
 		const a = await newProject();
 		const b = await newProject();
 		const first = await newTask(a.id, { title: "先に仰いだ" });
 		const second = await newTask(b.id, { title: "後に仰いだ" });
 		await patch(first.id, { state: "review", waiting_on: "案 A でよいか" });
-		await patch(second.id, { state: "review", waiting_on: "案 B でよいか" });
+		await patch(
+			second.id,
+			{ state: "review", waiting_on: "案 B でよいか" },
+			working("yukarin"),
+		);
 		await newTask(a.id, { title: "仰いでいない" });
 
-		const { body } = await text("/");
-		expect(body).toContain("案 A でよいか");
-		expect(body).toContain("案 B でよいか");
-		expect(body.indexOf("先に仰いだ")).toBeLessThan(body.indexOf("後に仰いだ"));
-		expect(body).not.toContain("仰いでいない");
-		expect(body).toContain(`href="/projects/${a.id}"`);
-		expect(body).toContain(`href="/projects/${b.id}"`);
-		expect(body).toMatch(/\d{4}-\d{2}-\d{2} \d{2}:\d{2}（たった今）から/);
-	});
+		const list = sideOf((await text("/")).body);
+		expect(list).toContain("案 A でよいか");
+		expect(list).toContain("案 B でよいか");
+		expect(list.indexOf("案 B でよいか")).toBeLessThan(
+			list.indexOf("案 A でよいか"),
+		);
+		expect(list).not.toContain("仰いでいない");
+		expect(list).toContain(`href="/tasks/${first.id}?from=review"`);
+		// 行には、担当や起票者ではなく、review にした actor を出す
+		expect(pieceOf(list, '<a class="item"', "案 B でよいか")).toContain(
+			"<span>Yukarin</span>",
+		);
+		expect(pieceOf(list, '<a class="item"', "案 A でよいか")).toContain(
+			"<span>Owner</span>",
+		);
+		expect(list).toMatch(
+			/<time datetime="[^"]+" title="\d{4}-\d{2}-\d{2} \d{2}:\d{2}">たった今<\/time>/,
+		);
 
-	it("owner の番の行に返信欄を付け、続けさせる先は review の前の状態にする", async () => {
+		// note だけの更新はタスクの行を変えないが、動いたとして上に来る
+		await patch(first.id, { note: "見直した" });
+		const after = sideOf((await text("/")).body);
+		expect(after.indexOf("案 A でよいか")).toBeLessThan(
+			after.indexOf("案 B でよいか"),
+		);
+		const detail = (await text(`/tasks/${second.id}`)).body;
+		expect(detail).toContain(`href="/projects/${b.id}"`);
+	});
+	it("Reply は review の前の状態に戻し、Done と Drop も選べ、送った後は一覧の次のタスクを開く", async () => {
 		const project = await newProject();
 		const fromDoing = await newTask(project.id, { state: "todo" });
 		await patch(fromDoing.id, { state: "doing" });
@@ -255,44 +297,47 @@ describe("画面", () => {
 			waiting_on: "起票直後に仰いだ",
 		});
 
-		const { body } = await text("/");
-		const formOf = (id: string) => {
-			const start = body.indexOf(`data-reply="${id}"`);
-			return body.slice(start, body.indexOf("</form>", start));
-		};
-		expect(formOf(fromDoing.id)).toContain(
-			'<button type="submit" value="doing">返信して続けさせる（doing）</button>',
+		const doing = (await text(`/tasks/${fromDoing.id}?from=review`)).body;
+		expect(doing).toContain(
+			'name="to" value="doing" class="primary" data-default>Reply</button>',
 		);
 		// backlog に戻すと誰も拾わないので、作業の状態でなければ todo にする
-		expect(formOf(fromBacklog.id)).toContain(
-			'value="todo">返信して続けさせる（todo）',
+		const backlog = (await text(`/tasks/${fromBacklog.id}`)).body;
+		expect(backlog).toContain(
+			'name="to" value="todo" class="primary" data-default>Reply</button>',
 		);
-		expect(formOf(fromBacklog.id)).toContain('value="done">完了にする');
-		expect(formOf(fromBacklog.id)).toContain('value="dropped">やめる');
+		expect(backlog).toContain(
+			'name="to" value="done" class="outline">Done</button>',
+		);
+		expect(backlog).toContain(
+			'name="to" value="dropped" class="quiet">Drop</button>',
+		);
+		// 新しい順の一覧で、fromBacklog の次は fromDoing
+		expect(backlog).toContain(
+			`data-reply="${fromBacklog.id}" data-next="/tasks/${fromDoing.id}?from=review"`,
+		);
 	});
-
-	it("タスクの画面では、review のときだけ返信欄を出す", async () => {
+	it("タスクの画面では、review のときだけ返事の欄を出す", async () => {
 		const project = await newProject();
 		const task = await newTask(project.id, { state: "todo" });
 		expect((await text(`/tasks/${task.id}`)).body).not.toContain("data-reply=");
 		await patch(task.id, { state: "review", waiting_on: "見てほしい" });
 		const { body } = await text(`/tasks/${task.id}`);
 		expect(body).toContain(`data-reply="${task.id}"`);
-		expect(body).toContain("返信して続けさせる（todo）");
+		expect(body).toContain('value="todo" class="primary" data-default>Reply');
+		expect(body).toContain('<p class="ask">見てほしい</p>');
 	});
-
-	it("タスクの無いプロジェクトは札にせず、畳んだ一覧に名前だけ出す", async () => {
+	it("プロジェクトの一覧では、タスクの無いプロジェクトを札にせず、畳んだ一覧に名前だけ出す", async () => {
 		const busy = await newProject();
 		const idle = await newProject();
 		await newTask(busy.id);
-		const { body } = await text("/");
+		const { body } = await text("/projects");
 		const [cards, folded = ""] = body.split("<details>");
 		expect(cards).toContain(`<div class="card"><a href="/projects/${busy.id}"`);
 		expect(cards).not.toContain(`href="/projects/${idle.id}"`);
 		expect(folded).toContain(`href="/projects/${idle.id}"`);
 		expect(folded).toContain("タスクの無いプロジェクト");
 	});
-
 	it("設定では、上書きの無いプロジェクトを畳む", async () => {
 		const own = await newProject();
 		const plain = await newProject();
@@ -315,19 +360,28 @@ describe("画面", () => {
 			},
 			working("yukarin"),
 		);
+		const safe = (body: string) => {
+			expect(body).not.toContain("<script>alert(1)");
+			expect(body).not.toContain("<img src=x");
+			expect(body).not.toContain('"><b>');
+			expect(body).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
+		};
 		for (const path of [
 			`/projects/${project.id}`,
 			`/tasks/${task.id}`,
 			"/triage",
 		]) {
-			const { body } = await text(path);
-			expect(body).not.toContain("<script>alert(1)");
-			expect(body).not.toContain("<img src=x");
-			expect(body).not.toContain('"><b>');
-			expect(body).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
+			safe((await text(path)).body);
+		}
+		await patch(
+			task.id,
+			{ state: "review", waiting_on: "<img src=x onerror=alert(3)>" },
+			working("yukarin"),
+		);
+		for (const path of ["/", `/tasks/${task.id}`]) {
+			safe((await text(path)).body);
 		}
 	});
-
 	it("ツリーを並び順で出し、絞り込みに合わない親は文脈として残す", async () => {
 		const project = await newProject();
 		const parent = await newTask(project.id, { title: "親のタスク" });
@@ -410,7 +464,7 @@ describe("画面", () => {
 		expect((await text(`/tasks/${done.id}`)).body).not.toContain("<progress");
 	});
 
-	it("タスクの画面に、本文・親子・変更の欄・履歴を出す", async () => {
+	it("タスクの画面に、本文・親子・変える欄・会話を出す", async () => {
 		const project = await newProject();
 		const parent = await newTask(project.id, { title: "親の件名" });
 		const task = await newTask(
@@ -442,29 +496,39 @@ describe("画面", () => {
 		expect(body).toContain('<option value="akarin" selected>Akarin</option>');
 		expect(body).not.toContain('<option value="retired"');
 		expect(body).toMatch(/value="infra" checked/);
-		expect(body).toContain("進めてよいか");
-
-		const history = body.slice(body.indexOf("<h2>履歴</h2>"));
-		expect(history).toContain("Yukarin・working・");
-		expect(history).toContain("Owner・mac-agent・");
-		expect(history).toContain("Owner・ブラウザ・");
-		expect(history).toContain("並びを変更");
-		expect(history).toContain(
-			'<span class="note">&lt;b&gt;方針&lt;/b&gt;を決めた</span>',
+		// 起票は本文のカードに、呼び出し元つきで出す
+		expect(body).toMatch(
+			/<b>Yukarin<\/b> が起票した<\/span><span class="when"><time [^>]+>[^<]+<\/time><span class="via">working<\/span>/,
 		);
-		expect(history).toContain("Akarin");
-		// 新しいものを上に出す
-		expect(history.indexOf("並びを変更")).toBeLessThan(history.indexOf("起票"));
-		// ID や order_key をそのまま並べない
-		expect(history).not.toContain("akarin<");
-		expect(history).not.toContain("order_key");
-	});
 
+		const timeline = timelineOf(body);
+		const entry = (title: string) => pieceOf(timeline, '<li class="ev', title);
+		expect(entry("担当を")).toContain("<b>Owner</b> が担当を Akarin にした");
+		expect(entry("担当を")).toContain('<span class="via">mac-agent</span>');
+		expect(entry("担当を")).toContain('<span class="label">infra</span>');
+		const question = entry("review にした");
+		expect(question).toContain('<span class="via">ブラウザ</span>');
+		expect(question).toContain('<p class="bt">進めてよいか</p>');
+		expect(question).toContain(
+			'<p class="bt note">&lt;b&gt;方針&lt;/b&gt;を決めた</p>',
+		);
+		// 新しいものを上に出し、order=asc で古い順にする
+		expect(timeline.indexOf("並びを変えた")).toBeLessThan(
+			timeline.indexOf("review にした"),
+		);
+		const asc = timelineOf((await text(`/tasks/${task.id}?order=asc`)).body);
+		expect(asc.indexOf("review にした")).toBeLessThan(
+			asc.indexOf("並びを変えた"),
+		);
+		// ID や order_key をそのまま並べない
+		expect(timeline).not.toContain("akarin<");
+		expect(timeline).not.toContain("order_key");
+	});
 	/** 件名を含む 1 件ぶんの HTML。区切りは、その画面で 1 件を包む開始タグ */
 	const pieceOf = (body: string, open: string, title: string) =>
 		body.split(open).find((piece) => piece.includes(title)) ?? "";
 
-	it("仕分け待ちに、AI が起票した未仕分けの backlog をプロジェクトをまたいで出す", async () => {
+	it("Triage に、AI が起票した未仕分けの backlog をプロジェクトをまたいで出し、先頭から 1 件ずつ捌く", async () => {
 		const a = await projectWithRepo();
 		const b = await newProject();
 		const origin = await newTask(a.id, { title: "仕分けの元の作業" });
@@ -501,61 +565,75 @@ describe("画面", () => {
 
 		const { status, body } = await text("/triage");
 		expect(status).toBe(200);
-		expect(body).not.toContain("owner が起票した backlog");
-		expect(body).not.toContain("もう todo に上げた");
-		expect(body).not.toContain("backlog に残すと決めた");
+		const list = sideOf(body);
+		expect(list).not.toContain("owner が起票した backlog");
+		expect(list).not.toContain("もう todo に上げた");
+		expect(list).not.toContain("backlog に残すと決めた");
 
-		const card = pieceOf(body, '<div class="card">', "作業中に見つけた課題");
-		expect(card).toContain(`href="/tasks/${found.id}"`);
-		expect(card).toMatch(
-			/起票 Yukarin・\d{4}-\d{2}-\d{2} \d{2}:\d{2}（たった今）/,
-		);
-		expect(card).toContain(`<a href="/projects/${b.id}">`);
-		expect(card).toContain(
-			`「<a href="/tasks/${origin.id}">仕分けの元の作業</a>」の作業中に見つけた（席 seat-triage）`,
-		);
-		expect(card).toContain('<span class="label">found</span>');
+		const item = pieceOf(list, '<a class="item"', "作業中に見つけた課題");
+		expect(item).toContain(`href="/tasks/${found.id}?from=triage"`);
+		expect(item).toContain("<span>Yukarin</span>");
+		expect(item).toContain("「仕分けの元の作業」の作業中に見つけた");
+		const other = pieceOf(list, '<a class="item"', "関係の無い AI の起票");
+		expect(other).toContain("<span>Akarin</span>");
+		expect(other).not.toContain("の作業中に見つけた");
+		expect(list.indexOf(found.id)).toBeLessThan(list.indexOf(plain.id));
+
+		// 一覧の先頭のタスクを、仕分けのボタンつきで開いておく
+		const firstId = list.match(/href="\/tasks\/([^?]+)\?from=triage"/)?.[1];
 		for (const action of ["todo", "dropped", "keep"]) {
-			expect(card).toContain(
-				`data-triage="${found.id}" data-action="${action}"`,
+			expect(body).toContain(
+				`data-triage="${firstId}" data-action="${action}"`,
 			);
 		}
-		const other = pieceOf(body, '<div class="card">', "関係の無い AI の起票");
-		expect(other).toContain("起票 Akarin・");
-		expect(other).toContain(`<a href="/projects/${a.id}">`);
-		expect(other).not.toContain("の作業中に見つけた");
-		expect(body.indexOf(found.id)).toBeLessThan(body.indexOf(plain.id));
+		expect(body).toContain('<body class="pane-detail">');
 
-		// 件数は、見出しとナビゲーションと行の数で一致し、他の画面にも出る
-		const count = body.match(/data-action="keep"/g)?.length ?? 0;
-		expect(body).toContain(`<span class="muted">${count} 件</span>`);
-		const nav = `<a href="/triage">仕分け待ち <span class="n some">${count}</span></a>`;
-		expect(body).toContain(nav);
-		expect((await text("/")).body).toContain(nav);
-		expect((await text("/settings")).body).toContain(nav);
-		expect((await text("/nowhere")).body).toContain(nav);
+		const opened = (await text(`/tasks/${found.id}?from=triage`)).body;
+		expect(opened).toMatch(
+			new RegExp(
+				`data-triage="${found.id}" data-action="todo" data-next="/(tasks/[^"]+\\?from=triage|triage)"`,
+			),
+		);
+		const meta = metaOf(opened);
+		expect(meta).toContain(
+			`見つけた元: <a href="/tasks/${origin.id}">仕分けの元の作業</a>`,
+		);
+		expect(meta).toContain("席 seat-triage");
+		expect(meta).toContain('<span class="label">found</span>');
+
+		// 件数は、一覧の行と切り替えで一致し、他の画面にも出る
+		const count = list.match(/<a class="item"/g)?.length ?? 0;
+		expect(list).toContain(`<span>${count} 件</span>`);
+		expect(body).toContain(
+			`<a href="/triage" aria-current="page">Triage<span class="count">${count}</span></a>`,
+		);
+		const tab = `<a href="/triage">Triage<span class="count">${count}</span></a>`;
+		expect((await text("/")).body).toContain(tab);
+		expect((await text("/settings")).body).toContain(tab);
+		expect((await text("/nowhere")).body).toContain(tab);
 
 		await patch(found.id, { state: "dropped" });
 		const after = (await text("/triage")).body;
-		expect(after).not.toContain("作業中に見つけた課題");
-		expect(after).toContain(
-			`<a href="/triage">仕分け待ち <span class="n some">${count - 1}</span></a>`,
-		);
+		expect(sideOf(after)).not.toContain("作業中に見つけた課題");
+		expect(after).toContain(`Triage<span class="count">${count - 1}</span>`);
 	});
-
-	it("仕分け待ちが 0 件でも、画面を出す", () => {
-		const body = renderTriage(
-			{ rows: [], projects: [], names: new Map(), now: new Date() },
-			{ triage: 0, syncWarnings: 0 },
-		);
+	it("Triage が 0 件でも、画面を出す", () => {
+		const body = renderInbox({
+			list: { kind: "triage", rows: [] },
+			projects: [],
+			names: new Map(),
+			now: new Date(),
+			nav: { review: 0, triage: 0, doing: 0, syncWarnings: 0 },
+			detail: null,
+			pane: "list",
+		});
 		expect(body).toContain("仕分けを待っているタスクは無い");
-		expect(body).toContain('<span class="muted">0 件</span>');
+		expect(body).toContain("<span>0 件</span>");
 		expect(body).toContain(
-			'<a href="/triage">仕分け待ち <span class="n">0</span></a>',
+			'<a href="/triage" aria-current="page">Triage<span class="count">0</span></a>',
 		);
 		expect(body).not.toContain("data-triage");
 	});
-
 	it("設定に、効いている値と出どころを出し、自分の値がある scope にだけ戻すボタンを出す", async () => {
 		const project = await newProject();
 		const form = async (scope: string) =>
@@ -619,50 +697,71 @@ describe("画面", () => {
 		expect((await relate(next.id, "follows", base.id)).status).toBe(200);
 		expect((await relate(base.id, "replaced_by", redo.id)).status).toBe(200);
 
-		const row = async (taskId: string, title: string) => {
-			const { body } = await text(`/tasks/${taskId}`);
-			const section = body.slice(
-				body.indexOf("<h2>関係</h2>"),
-				body.indexOf("<h2>変更</h2>"),
+		const row = async (taskId: string, title: string) =>
+			pieceOf(
+				metaOf((await text(`/tasks/${taskId}`)).body),
+				'<div class="rel">',
+				title,
 			);
-			return pieceOf(section, '<div class="row">', title);
-		};
-		const rel = (name: string) => `<span class="rel">${name}</span>`;
 
-		expect(await row(base.id, "見つけた課題のタスク")).toContain(
-			rel("ここで見つけた"),
-		);
-		expect(await row(base.id, "見つけた課題のタスク")).toContain(
-			"discovered_from・席 seat-view",
-		);
-		expect(await row(base.id, "続きのタスク")).toContain(rel("続き"));
-		expect(await row(base.id, "作り直したタスク")).toContain(
-			rel("作り直した先"),
-		);
+		const seen = await row(base.id, "見つけた課題のタスク");
+		expect(seen).toContain("ここで見つけた: ");
+		expect(seen).toContain("席 seat-view");
+		expect(await row(base.id, "続きのタスク")).toContain("続き: ");
+		expect(await row(base.id, "作り直したタスク")).toContain("作り直した先: ");
 		const origin = await row(found.id, "席に渡したタスク");
-		expect(origin).toContain(rel("見つけた元"));
+		expect(origin).toContain("見つけた元: ");
 		expect(origin).toContain(`href="/tasks/${base.id}"`);
 		expect(origin).toContain("席 seat-view");
-		expect(await row(next.id, "席に渡したタスク")).toContain(rel("区切った元"));
-		expect(await row(redo.id, "席に渡したタスク")).toContain(rel("作り直す前"));
+		expect(await row(next.id, "席に渡したタスク")).toContain("区切った元: ");
+		expect(await row(redo.id, "席に渡したタスク")).toContain("作り直す前: ");
 
 		const runs = async () => {
-			const { body } = await text(`/tasks/${base.id}`);
-			return body.slice(
-				body.indexOf("<h2>実行記録</h2>"),
-				body.indexOf("<h2>変更</h2>"),
-			);
+			const meta = metaOf((await text(`/tasks/${base.id}`)).body);
+			return meta.slice(meta.indexOf('<span class="mlabel">実行記録</span>'));
 		};
 		const open = await runs();
-		expect(open).toContain("席 seat-view");
-		expect(open).toContain("Yukarin・model-x");
-		expect(open).toMatch(/\d{4}-\d{2}-\d{2} \d{2}:\d{2} 〜 実行中/);
+		expect(open).toContain("席 seat-view の Yukarin");
+		expect(open).toContain("model-x");
+		expect(open).toMatch(/\d{4}-\d{2}-\d{2} \d{2}:\d{2} から 実行中/);
 		await call(working("yukarin"), "POST", `/v1/runs/${run.id}/end`);
 		expect(await runs()).toMatch(
-			/\d{4}-\d{2}-\d{2} \d{2}:\d{2} 〜 \d{4}-\d{2}-\d{2} \d{2}:\d{2}</,
+			/\d{4}-\d{2}-\d{2} \d{2}:\d{2} から \d{4}-\d{2}-\d{2} \d{2}:\d{2} まで/,
 		);
 
 		const none = (await text(`/tasks/${redo.id}`)).body;
-		expect(none).not.toContain("<h2>実行記録</h2>");
+		expect(none).not.toContain('<span class="mlabel">実行記録</span>');
+	});
+
+	it("Doing の一覧に、閉じていない run の席か、席に渡していないことと、子タスクの進み具合を出す", async () => {
+		const project = await projectWithRepo();
+		const seated = await newTask(project.id, {
+			title: "席で作業中",
+			state: "todo",
+		});
+		await patch(seated.id, { state: "doing" });
+		await startRun(seated.id, "seat-doing", working("yukarin"));
+		const parent = await newTask(project.id, {
+			title: "子を持つ作業中",
+			state: "todo",
+		});
+		await patch(parent.id, { state: "doing" });
+		const child = await newTask(project.id, {
+			title: "済んだ子",
+			parent_id: parent.id,
+		});
+		// 子がすべて片付くと親が review に移るので、残る子を先に作る
+		await newTask(project.id, { title: "残る子", parent_id: parent.id });
+		await patch(child.id, { state: "done" });
+
+		const { body } = await text("/doing");
+		const list = sideOf(body);
+		expect(pieceOf(list, '<a class="item"', "席で作業中")).toContain(
+			"席 seat-doing の Yukarin",
+		);
+		const item = pieceOf(list, '<a class="item"', "子を持つ作業中");
+		expect(item).toContain("席に渡していない");
+		expect(item).toContain("子タスク 1 / 2 済み");
+		expect(body).toContain('<body class="pane-list">');
 	});
 });

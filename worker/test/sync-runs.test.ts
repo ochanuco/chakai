@@ -98,7 +98,7 @@ describe("同期の結果を残す", () => {
 		expect(latest?.warnings.join("\n")).toContain("503");
 		expect(previous?.trigger).toBe("cron");
 		expect(await page("/")).toContain(
-			`<a href="/sync">同期 <span class="n some">警告 ${latest?.warnings.length}</span></a>`,
+			`<a href="/sync">同期<span class="warn">警告 ${latest?.warnings.length}</span></a>`,
 		);
 		const list = await page("/sync");
 		expect(list).toContain("手動（Yukarin）");

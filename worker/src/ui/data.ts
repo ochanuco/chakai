@@ -1,6 +1,7 @@
-import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { Db } from "../db/client.ts";
 import {
+	events,
 	labels,
 	projectRepos,
 	projects,
@@ -77,23 +78,130 @@ export const loadStateCounts = async (db: Db) => {
 	return byProject;
 };
 
-export type ReviewRow = TaskRow & { since: string; from: TaskState | null };
+/** タスクごとに、履歴の最後の時刻を返す。note だけの更新はタスクの行を変えないので、履歴から取る */
+const lastActivity = async (db: Db, taskIds: string[]) => {
+	const at = new Map<string, string>();
+	for (const ids of chunked(taskIds)) {
+		for (const r of await db
+			.select({ taskId: events.entityId, at: sql<string>`max(${events.at})` })
+			.from(events)
+			.where(and(eq(events.entity, "task"), inArray(events.entityId, ids)))
+			.groupBy(events.entityId)) {
+			at.set(r.taskId, r.at);
+		}
+	}
+	return at;
+};
 
-/** owner の番のタスクを、待たせている時間の長い順に返す */
+const newestFirst = <T extends { activity: string }>(rows: T[]) =>
+	rows.sort((a, b) =>
+		a.activity < b.activity ? 1 : a.activity > b.activity ? -1 : 0,
+	);
+
+export type ReviewRow = TaskRow & {
+	since: string;
+	from: TaskState | null;
+	/** review にした actor。履歴に無ければ起票した actor */
+	askedBy: string;
+	activity: string;
+};
+
+/** owner の番のタスクを、最後に動いた新しい順に返す */
 export const loadReviews = async (db: Db): Promise<ReviewRow[]> => {
 	const rows = await db.select().from(tasks).where(eq(tasks.state, "review"));
 	const ids = rows.map((r) => r.id);
-	const since = await reviewSince(db, ids);
-	return withLabels(rows, await labelPairs(db, ids))
-		.map((r) => {
+	const [since, activity] = await Promise.all([
+		reviewSince(db, ids),
+		lastActivity(db, ids),
+	]);
+	return newestFirst(
+		withLabels(rows, await labelPairs(db, ids)).map((r) => {
 			const entered = since.get(r.id);
 			return {
 				...r,
 				since: entered?.at ?? r.updatedAt,
 				from: entered?.from ?? null,
+				askedBy: entered?.by ?? r.createdBy,
+				activity: activity.get(r.id) ?? r.updatedAt,
 			};
-		})
-		.sort((a, b) => (a.since < b.since ? -1 : a.since > b.since ? 1 : 0));
+		}),
+	);
+};
+
+export type DoingRow = TaskRow & {
+	activity: string;
+	/** 閉じていない run。無ければ席に渡していない */
+	openRun: { seat: string; actorId: string; startedAt: string } | null;
+	pulls: Link[];
+	/** 直下の子の数。子が無ければ null */
+	children: { done: number; total: number } | null;
+};
+
+/** doing のタスクを、最後に動いた新しい順に返す */
+export const loadDoing = async (db: Db): Promise<DoingRow[]> => {
+	const rows = await db.select().from(tasks).where(eq(tasks.state, "doing"));
+	const ids = rows.map((r) => r.id);
+	const openRuns = new Map<string, NonNullable<DoingRow["openRun"]>>();
+	const children = new Map<string, { done: number; total: number }>();
+	for (const chunk of chunked(ids)) {
+		for (const r of await db
+			.select()
+			.from(runs)
+			.where(and(inArray(runs.taskId, chunk), isNull(runs.endedAt)))
+			.orderBy(asc(runs.id))) {
+			openRuns.set(r.taskId, {
+				seat: r.seat,
+				actorId: r.actorId,
+				startedAt: r.startedAt,
+			});
+		}
+		for (const c of await db
+			.select({
+				parentId: tasks.parentId,
+				state: tasks.state,
+				count: sql<number>`count(*)`,
+			})
+			.from(tasks)
+			.where(inArray(tasks.parentId, chunk))
+			.groupBy(tasks.parentId, tasks.state)) {
+			if (!c.parentId) continue;
+			const n = children.get(c.parentId) ?? { done: 0, total: 0 };
+			// 進み具合の数え方に合わせ、やめた子は分母に入れない
+			if (c.state !== "dropped") n.total += c.count;
+			if (c.state === "done") n.done += c.count;
+			children.set(c.parentId, n);
+		}
+	}
+	const [activity, linked, pairs] = await Promise.all([
+		lastActivity(db, ids),
+		linksOf(db, "task", ids),
+		labelPairs(db, ids),
+	]);
+	return newestFirst(
+		withLabels(rows, pairs).map((r) => ({
+			...r,
+			activity: activity.get(r.id) ?? r.updatedAt,
+			openRun: openRuns.get(r.id) ?? null,
+			pulls: (linked.get(r.id) ?? []).filter((l) => l.role === "deliverable"),
+			children: children.get(r.id) ?? null,
+		})),
+	);
+};
+
+/** 一覧の切り替えに出す件数 */
+export const loadCounts = async (db: Db) => {
+	const rows = await db
+		.select({ state: tasks.state, count: sql<number>`count(*)` })
+		.from(tasks)
+		.where(inArray(tasks.state, ["review", "doing"]))
+		.groupBy(tasks.state);
+	const of = (state: TaskState) =>
+		rows.find((r) => r.state === state)?.count ?? 0;
+	return {
+		review: of("review"),
+		doing: of("doing"),
+		triage: await countTriage(db),
+	};
 };
 
 export const countTriage = async (db: Db) =>

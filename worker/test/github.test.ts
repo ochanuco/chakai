@@ -477,7 +477,8 @@ describe("同期", () => {
 		await Promise.all(pending);
 		expect((await read(task.id)).state).toBe("done");
 		const page = await (await call(owner, "GET", `/tasks/${task.id}`)).text();
-		expect(page).toContain("同期・Cron・");
+		expect(page).toContain("<b>同期</b> が");
+		expect(page).toContain('<span class="via">Cron</span>');
 		expect((await eventsOf(task.id)).at(-1)).toMatchObject({
 			field: "state",
 			actor_id: "sync",
@@ -1008,8 +1009,14 @@ describe("手で呼んだ同期の履歴", () => {
 		});
 		const page = async (id: string) =>
 			(await call(owner, "GET", `/tasks/${id}`)).text();
-		expect(await page(viaLogin.id)).toContain("Owner・ブラウザ・");
+		expect(await page(viaLogin.id)).toContain("<b>Owner</b> が");
+		expect(await page(viaLogin.id)).toContain(
+			'<span class="via">ブラウザ</span>',
+		);
 		expect(await page(viaLogin.id)).not.toContain("Cron");
-		expect(await page(viaToken.id)).toContain("Yukarin・working・");
+		expect(await page(viaToken.id)).toContain("<b>Yukarin</b> が");
+		expect(await page(viaToken.id)).toContain(
+			'<span class="via">working</span>',
+		);
 	});
 });
