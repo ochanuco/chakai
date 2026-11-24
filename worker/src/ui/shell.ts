@@ -121,6 +121,8 @@ progress{width:5em;height:.5em;vertical-align:middle;accent-color:var(--matcha)}
 .when{display:inline-flex;gap:8px;color:var(--muted);font-size:12px;white-space:nowrap}
 .via::before{content:"from ";}
 .opening{margin-bottom:20px}
+.fold{max-height:13em;overflow:hidden;-webkit-mask-image:linear-gradient(#000 65%,transparent);mask-image:linear-gradient(#000 65%,transparent)}
+.unfold{display:block;margin:0 14px 12px;padding:0;border:0;background:none;color:var(--link);font-size:13px}
 .question .bubble{border-color:var(--matcha)}
 .question .bh{background:var(--matcha-wash);border-color:var(--matcha-line);color:var(--matcha-ink)}
 .question .bt{font-size:16px;font-weight:600}
@@ -198,6 +200,7 @@ form .checks{display:flex;flex-wrap:wrap;gap:4px 14px}
 .bar .buttons .quiet{flex:1;text-align:left;padding-left:4px}
 .bar .buttons .primary{flex:none;width:180px}
 .item{padding:14px 16px}
+.fold{max-height:8em}
 .side{border-right:0}
 .pane-list .item[aria-current]{background:none;box-shadow:none}
 .doc{padding:16px 16px 32px}

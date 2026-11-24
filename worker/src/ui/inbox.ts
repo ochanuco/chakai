@@ -480,7 +480,7 @@ ${reviewing ? html`<div class="actions desk">${replyButtons(resume, "reply-desk"
 ${chips(d, names)}
 <div class="body">
 <div class="conv">
-<article class="ev say opening">${avatar(nameOf(names, task.createdBy))}<div class="bubble"><div class="bh"><span><b>${nameOf(names, task.createdBy)}</b> が起票した</span><span class="when">${timeAgo(task.createdAt, d.now)}${created ? html`<span class="via">${via(created)}</span>` : ""}</span></div>${task.body ? html`<p class="bt">${task.body}</p>` : html`<p class="bt muted">本文は無い。</p>`}</div></article>
+<article class="ev say opening">${avatar(nameOf(names, task.createdBy))}<div class="bubble"><div class="bh"><span><b>${nameOf(names, task.createdBy)}</b> が起票した</span><span class="when">${timeAgo(task.createdAt, d.now)}${created ? html`<span class="via">${via(created)}</span>` : ""}</span></div>${task.body ? html`<p class="bt fold" data-fold>${task.body}</p><button type="button" class="unfold" data-unfold hidden>全文を読む</button>` : html`<p class="bt muted">本文は無い。</p>`}</div></article>
 ${
 	d.view.children.length > 0
 		? html`<section class="children"><h2>子タスク</h2>${d.view.children.map(
