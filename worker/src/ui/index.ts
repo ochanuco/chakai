@@ -9,6 +9,8 @@ import { CLIENT_JS } from "./client.ts";
 import {
 	loadCounts,
 	loadDoing,
+	loadRecent,
+	loadTodo,
 	loadProject,
 	loadProjects,
 	loadReviews,
@@ -22,6 +24,7 @@ import {
 	type Detail,
 	type ListKind,
 	type ListRows,
+	listPane,
 	nextHref,
 	type Order,
 	renderInbox,
@@ -51,16 +54,24 @@ const page = (body: string, status = 200) =>
 		headers: { ...HEADERS, "content-type": "text/html; charset=utf-8" },
 	});
 
-const LIST_KINDS: ListKind[] = ["review", "triage", "doing"];
+const LIST_KINDS: ListKind[] = ["review", "triage", "todo", "doing", "recent"];
 
-const loadList = async (db: Db, kind: ListKind): Promise<ListRows> => {
+const loadList = async (
+	db: Db,
+	kind: ListKind,
+	q: string | null,
+): Promise<ListRows> => {
 	switch (kind) {
 		case "review":
 			return { kind, rows: await loadReviews(db) };
 		case "triage":
 			return { kind, rows: await loadTriage(db) };
+		case "todo":
+			return { kind, rows: await loadTodo(db) };
 		case "doing":
 			return { kind, rows: await loadDoing(db) };
+		case "recent":
+			return { kind, rows: await loadRecent(db, q), q };
 	}
 };
 
@@ -72,7 +83,9 @@ const listOfTask = (
 ): ListKind => {
 	if (LIST_KINDS.includes(param as ListKind)) return param as ListKind;
 	if (awaitingTriage) return "triage";
-	return state === "doing" ? "doing" : "review";
+	if (state === "review" || state === "todo" || state === "doing") return state;
+	// backlog・done・dropped はどの一覧にも入らないので、Recent から開く
+	return "recent";
 };
 
 const loadDetail = async (
@@ -143,7 +156,7 @@ export const handleUi = async (
 		loadedTriage?: TriageRow[],
 	) => {
 		const [list, projects, actors, triage] = await Promise.all([
-			loadList(db, kind),
+			loadList(db, kind, url.searchParams.get("q")?.trim() || null),
 			loadProjects(db),
 			listActors(db),
 			kind === "triage" ? null : (loadedTriage ?? loadTriage(db)),
@@ -173,7 +186,13 @@ export const handleUi = async (
 	};
 
 	if (section === undefined) return inbox("review");
-	if ((section === "triage" || section === "doing") && !id) {
+	if (
+		(section === "triage" ||
+			section === "todo" ||
+			section === "doing" ||
+			section === "recent") &&
+		!id
+	) {
 		return inbox(section);
 	}
 	if (section === "tasks" && id) {
@@ -196,6 +215,19 @@ export const handleUi = async (
 			triage,
 		);
 	}
+	// 一覧の画面でなくても、左ペインには Review の一覧を出し、画面ごとに形を変えない
+	const [reviews, allProjects, actors] = await Promise.all([
+		loadReviews(db),
+		loadProjects(db),
+		listActors(db),
+	]);
+	nav.side = listPane(
+		{ kind: "review", rows: reviews },
+		new Map(allProjects.map((p) => [p.id, p])),
+		actorNames(actors),
+		now,
+		null,
+	);
 	if (section === "more" && !id) return page(renderMore(nav));
 	if (section === "projects" && !id) {
 		const [projects, stateCounts] = await Promise.all([

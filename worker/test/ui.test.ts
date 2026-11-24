@@ -36,7 +36,9 @@ describe("画面を開ける人", () => {
 		"/",
 		"/assets/app.js",
 		"/triage",
+		"/todo",
 		"/doing",
+		"/recent",
 		"/more",
 		"/projects",
 		"/settings",
@@ -623,7 +625,7 @@ describe("画面", () => {
 			projects: [],
 			names: new Map(),
 			now: new Date(),
-			nav: { review: 0, triage: 0, doing: 0, syncWarnings: 0 },
+			nav: { review: 0, triage: 0, todo: 0, doing: 0, syncWarnings: 0 },
 			detail: null,
 			pane: "list",
 		});
@@ -731,6 +733,84 @@ describe("画面", () => {
 
 		const none = (await text(`/tasks/${redo.id}`)).body;
 		expect(none).not.toContain('<span class="mlabel">実行記録</span>');
+	});
+
+	it("Todo の一覧に、todo のタスクをプロジェクトの並び順で、親の件名つきで出す", async () => {
+		const project = await newProject();
+		const parent = await newTask(project.id, { title: "Todo の親" });
+		const first = await newTask(project.id, {
+			title: "先に拾う todo",
+			state: "todo",
+			parent_id: parent.id,
+		});
+		const second = await newTask(project.id, {
+			title: "後に拾う todo",
+			state: "todo",
+		});
+		await patch(second.id, { order: { before: first.id } });
+		await newTask(project.id, { title: "backlog のまま" });
+
+		const { body } = await text("/todo");
+		const list = sideOf(body);
+		expect(list.indexOf("後に拾う todo")).toBeLessThan(
+			list.indexOf("先に拾う todo"),
+		);
+		expect(list).not.toContain("backlog のまま");
+		expect(pieceOf(list, '<a class="item"', "先に拾う todo")).toContain(
+			"親: Todo の親",
+		);
+		expect(body).toMatch(
+			/<a href="\/todo" aria-current="page">Todo<span class="count">\d+<\/span><\/a>/,
+		);
+		// 一覧から開いたタスクは、Todo の一覧を左に出したまま開く
+		expect((await text(`/tasks/${first.id}`)).body).toContain(
+			`href="/tasks/${first.id}?from=todo" data-row aria-current="true"`,
+		);
+	});
+
+	it("Recent に、状態を問わず最後に動いたタスクを新しい順に出し、件名と本文で探せる", async () => {
+		const project = await newProject();
+		const done = await newTask(project.id, {
+			title: "片付いた recent-x",
+			state: "todo",
+		});
+		await patch(done.id, { state: "done" });
+		const later = await newTask(project.id, {
+			title: "あとで動いた",
+			body: "本文に recent-x を含む",
+		});
+
+		const list = sideOf((await text("/recent")).body);
+		expect(list.indexOf("あとで動いた")).toBeLessThan(
+			list.indexOf("片付いた recent-x"),
+		);
+		const found = sideOf((await text("/recent?q=recent-x")).body);
+		expect(found).toContain(`href="/tasks/${done.id}?from=recent"`);
+		expect(found).toContain(`href="/tasks/${later.id}?from=recent"`);
+		expect(sideOf((await text("/recent?q=no-such-word")).body)).toContain(
+			"当てはまるタスクは無い",
+		);
+		// どの一覧にも入らない状態のタスクは、Recent の一覧の中で開く
+		expect((await text(`/tasks/${done.id}`)).body).toContain(
+			`href="/tasks/${done.id}?from=recent" data-row aria-current="true"`,
+		);
+	});
+
+	it("一覧でない画面でも、左ペインに Review の一覧と、上の段のリンクを出す", async () => {
+		const project = await newProject();
+		const task = await newTask(project.id, { title: "左に残る review" });
+		await patch(task.id, { state: "review", waiting_on: "左に残るか" });
+		for (const path of [
+			"/settings",
+			"/sync",
+			"/projects",
+			`/projects/${project.id}`,
+		]) {
+			const side = sideOf((await text(path)).body);
+			expect(side).toContain("左に残るか");
+			expect(side).toContain('<a href="/recent"');
+			expect(side).toContain('<a href="/settings"');
+		}
 	});
 
 	it("Doing の一覧に、閉じていない run の席か、席に渡していないことと、子タスクの進み具合を出す", async () => {

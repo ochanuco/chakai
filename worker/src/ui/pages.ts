@@ -54,7 +54,7 @@ export const badge = (state: TaskState) =>
 	html`<span class="state s-${state}">${state}</span>`;
 
 const stateSelect = (task: TaskRow) =>
-	html`<select class="state s-${task.state}" data-quick-state="${task.id}" data-current="${task.state}" aria-label="状態">${TASK_STATES.map(
+	html`<select class="state s-${task.state}" data-quick-state="${task.id}" data-current="${task.state}" data-waiting="${task.waitingOn ?? ""}" aria-label="状態">${TASK_STATES.map(
 		(s) =>
 			html`<option value="${s}"${s === task.state ? html` selected` : ""}>${s}</option>`,
 	)}</select>`;
@@ -176,7 +176,7 @@ const doc = (
 		nav,
 		section: "more",
 		pane: "page",
-		side: moreMenu(nav, more),
+		side: nav.side ?? html``,
 		main: html`<div class="doc">${content}</div>`,
 		more,
 	});
@@ -187,7 +187,7 @@ export const renderMore = (nav: Nav): string =>
 		nav,
 		section: "more",
 		pane: "page",
-		side: moreMenu(nav),
+		side: nav.side ?? html``,
 		main: html`<div class="doc"><h1>More</h1>${moreMenu(nav)}</div>`,
 	});
 

@@ -40,6 +40,47 @@ export const CLIENT_JS = `"use strict";
 	};
 
 	const taskPath = (id) => "/v1/tasks/" + encodeURIComponent(id);
+
+	// 状態を変えたタスクは、今の一覧から外れて見失いやすい。
+	// 直前の変更を覚えておき、次の画面で「何をどうしたか」と「元に戻す」を出す
+	const LAST = "chakai:last-change";
+	const remember = (change) => {
+		try {
+			sessionStorage.setItem(LAST, JSON.stringify(change));
+		} catch {}
+	};
+	const pageTitle = () =>
+		document.querySelector(".titles h1")?.textContent ?? "タスク";
+
+	const showLastChange = () => {
+		let change;
+		try {
+			change = JSON.parse(sessionStorage.getItem(LAST) ?? "null");
+			sessionStorage.removeItem(LAST);
+		} catch {}
+		if (!change || !change.id || change.from === change.to) return;
+		const bar = document.createElement("div");
+		bar.className = "toast";
+		bar.setAttribute("role", "status");
+		const text = document.createElement("span");
+		text.className = "what";
+		text.textContent = "「" + change.title + "」を " + change.to + " にした";
+		const open = document.createElement("a");
+		open.href = "/tasks/" + encodeURIComponent(change.id);
+		open.textContent = "開く";
+		const undo = document.createElement("button");
+		undo.type = "button";
+		undo.textContent = "元に戻す（" + change.from + "）";
+		undo.addEventListener("click", async () => {
+			undo.disabled = true;
+			const body = { state: change.from, note: "元に戻した" };
+			if (change.from === "review") body.waiting_on = change.waiting || "元に戻した";
+			const done = await patch(change.id, body, open.href);
+			if (!done) undo.disabled = false;
+		});
+		bar.append(text, open, undo);
+		document.getElementById("alert")?.after(bar);
+	};
 	const patch = (id, body, next) => send("PATCH", taskPath(id), body, next);
 
 	document.addEventListener("change", async (event) => {
@@ -64,6 +105,13 @@ export const CLIENT_JS = `"use strict";
 			body.note = note;
 		}
 		select.disabled = true;
+		remember({
+			id,
+			title: select.closest(".row")?.querySelector(".title")?.textContent ?? "タスク",
+			from: select.dataset.current,
+			to: select.value,
+			waiting: select.dataset.waiting,
+		});
 		if (!(await patch(id, body))) {
 			select.disabled = false;
 			select.value = select.dataset.current;
@@ -90,6 +138,9 @@ export const CLIENT_JS = `"use strict";
 		const siblings = document.querySelectorAll("button[data-triage]");
 		for (const b of siblings) b.disabled = true;
 		const next = button.dataset.next;
+		if (action !== "keep") {
+			remember({ id, title: pageTitle(), from: "backlog", to: action });
+		}
 		const done =
 			action === "keep"
 				? await send("POST", taskPath(id) + "/triage", undefined, next)
@@ -115,6 +166,13 @@ export const CLIENT_JS = `"use strict";
 			}
 			note = DEFAULT_REPLY;
 		}
+		remember({
+			id: form.dataset.reply,
+			title: pageTitle(),
+			from: "review",
+			to: submitter.value,
+			waiting: form.dataset.question,
+		});
 		const buttons = document.querySelectorAll(
 			"button[name=to], [data-reply] button",
 		);
@@ -125,6 +183,16 @@ export const CLIENT_JS = `"use strict";
 			form.dataset.next,
 		);
 		if (!sent) for (const b of buttons) b.disabled = false;
+	});
+
+	showLastChange();
+
+	document.addEventListener("submit", (event) => {
+		const form = event.target;
+		if (!(form instanceof HTMLFormElement) || !("search" in form.dataset)) return;
+		event.preventDefault();
+		const q = form.elements.namedItem("q").value.trim();
+		location.assign(q ? "/recent?q=" + encodeURIComponent(q) : "/recent");
 	});
 
 	// 長い本文は畳んでおき、はみ出したときだけ「全文を読む」と「畳む」を切り替えられるようにする
@@ -241,6 +309,15 @@ export const CLIENT_JS = `"use strict";
 			}
 			const submit = form.querySelector("button[type=submit]");
 			submit.disabled = true;
+			if (body.state) {
+				remember({
+					id: form.dataset.task,
+					title: pageTitle(),
+					from: form.dataset.state,
+					to: body.state,
+					waiting: form.dataset.waiting,
+				});
+			}
 			if (!(await patch(form.dataset.task, body))) submit.disabled = false;
 		});
 	}
