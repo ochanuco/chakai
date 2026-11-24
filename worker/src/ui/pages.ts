@@ -1,113 +1,35 @@
 import { TASK_STATES, type TaskState } from "../db/schema.ts";
-import type { TaskEvent } from "../history.ts";
 import type { Link } from "../links.ts";
 import { type Progress, progressOf } from "../progress.ts";
-import type { Actor, Label } from "../roster.ts";
+import type { Actor } from "../roster.ts";
 import {
 	SETTING_KEYS,
 	type SettingSource,
 	type Settings,
 } from "../settings.ts";
-import { SYNC_ACTOR_ID, type SyncRun } from "../sync.ts";
+import type { SyncRun } from "../sync.ts";
 import type {
 	ProjectRow,
 	ProjectView,
 	RelatedTask,
-	ReviewRow,
 	SettingsView,
 	StateCounts,
 	TaskRow,
-	TaskView,
-	TriageRow,
 } from "./data.ts";
-import { html, Markup } from "./html.ts";
+import { html, type Markup } from "./html.ts";
+import { type MoreItem, moreMenu, type Nav, page } from "./shell.ts";
 
-const CSS = `
-:root{color-scheme:light dark;--bg:#f7f7f5;--card:#fff;--fg:#1d1d1b;--muted:#6b6b66;--line:#e2e2dc;--link:#2459a6;--alert-bg:#fde4e4;--alert-fg:#8f1d1d;
---backlog-bg:#e8e8e3;--backlog-fg:#4a4a45;--todo-bg:#dbe8fb;--todo-fg:#1d4f91;--doing-bg:#fdecc8;--doing-fg:#855000;--review-bg:#f9d9e3;--review-fg:#9c1f4a;--done-bg:#d9f0dc;--done-fg:#1f6b2a;--dropped-fg:#85857f}
-@media (prefers-color-scheme:dark){:root{--bg:#141413;--card:#1e1e1c;--fg:#ecece8;--muted:#a0a09a;--line:#33332f;--link:#8ab4f8;--alert-bg:#4a1c1c;--alert-fg:#ffc9c9;
---backlog-bg:#33332f;--backlog-fg:#c9c9c2;--todo-bg:#1d3557;--todo-fg:#a9cbff;--doing-bg:#4a3410;--doing-fg:#ffcf7a;--review-bg:#55202f;--review-fg:#ffb0c6;--done-bg:#1d3f23;--done-fg:#9bdca3;--dropped-fg:#8f8f88}}
-*{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,"Hiragino Sans",sans-serif;overflow-wrap:anywhere}
-a{color:var(--link);text-decoration:none}
-a:hover{text-decoration:underline}
-header{border-bottom:1px solid var(--line);background:var(--card)}
-header nav{max-width:960px;margin:0 auto;padding:10px 16px;display:flex;flex-wrap:wrap;gap:4px 16px;align-items:baseline}
-header .brand{font-weight:700;color:var(--fg)}
-header .n{display:inline-block;min-width:1.5em;border-radius:999px;padding:0 6px;font-size:.8rem;font-weight:600;text-align:center;background:var(--backlog-bg);color:var(--backlog-fg)}
-header .n.some{background:var(--review-bg);color:var(--review-fg)}
-main{max-width:960px;margin:0 auto;padding:16px 16px 48px}
-h1{font-size:1.3rem;line-height:1.4;margin:8px 0}
-h2{font-size:1.05rem;margin:28px 0 8px}
-.muted{color:var(--muted);font-size:.875rem}
-.crumbs{font-size:.875rem;color:var(--muted)}
-.alert{background:var(--alert-bg);color:var(--alert-fg);border-radius:8px;padding:10px 12px;margin:12px 0}
-.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-top:8px}
-.state{display:inline-block;border:0;border-radius:999px;padding:2px 10px;font:inherit;font-size:.8rem;font-weight:600;line-height:1.5;white-space:nowrap}
-select.state{appearance:none;-webkit-appearance:none;cursor:pointer;padding-right:22px;background-image:linear-gradient(45deg,transparent 50%,currentColor 50%),linear-gradient(135deg,currentColor 50%,transparent 50%);background-position:calc(100% - 12px) 55%,calc(100% - 8px) 55%;background-size:4px 4px;background-repeat:no-repeat}
-.s-backlog{background-color:var(--backlog-bg);color:var(--backlog-fg)}
-.s-todo{background-color:var(--todo-bg);color:var(--todo-fg)}
-.s-doing{background-color:var(--doing-bg);color:var(--doing-fg)}
-.s-review{background-color:var(--review-bg);color:var(--review-fg)}
-.s-done{background-color:var(--done-bg);color:var(--done-fg)}
-.s-dropped{background-color:transparent;color:var(--dropped-fg);box-shadow:inset 0 0 0 1px var(--line);text-decoration:line-through}
-.label{display:inline-block;border:1px solid var(--line);border-radius:6px;padding:0 6px;font-size:.78rem;color:var(--muted);margin-right:4px}
-.chips{display:flex;flex-wrap:wrap;gap:6px;margin:12px 0}
-.chip{border:1px solid var(--line);border-radius:999px;padding:2px 12px;font-size:.85rem;color:var(--fg);background:var(--card)}
-.chip.on{border-color:var(--fg);font-weight:600}
-.chip .n{color:var(--muted);font-weight:400;margin-left:4px}
-ul.tree,ul.tree ul{list-style:none;margin:0;padding:0}
-ul.tree ul{margin-left:14px;padding-left:10px;border-left:2px solid var(--line)}
-.row{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;padding:8px 0;border-bottom:1px solid var(--line)}
-.row .title{flex:1 1 180px;min-width:0;color:var(--fg)}
-.row .who{color:var(--muted);font-size:.85rem;white-space:nowrap}
-.row .waiting{flex-basis:100%;font-size:.875rem;color:var(--review-fg)}
-.reply{flex-basis:100%}
-.reply textarea{width:100%;box-sizing:border-box;font:inherit}
-.row.context{opacity:.55}
-.row.closed .title{color:var(--muted)}
-.row .rel{flex:0 0 7.5em;color:var(--muted);font-size:.85rem}
-.pr{display:inline-block;border-radius:6px;padding:0 6px;font-size:.78rem;font-weight:600;white-space:nowrap;background:var(--backlog-bg);color:var(--backlog-fg)}
-.pr.good{background:var(--done-bg);color:var(--done-fg)}
-.pr.bad{background:var(--alert-bg);color:var(--alert-fg)}
-.pr.wait{background:var(--doing-bg);color:var(--doing-fg)}
-.actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
-.actions button,button.plain{font:inherit;padding:4px 12px;border-radius:6px;border:1px solid var(--line);background:var(--card);color:var(--fg);cursor:pointer}
-.actions button:disabled,button.plain:disabled{opacity:.5;cursor:default}
-.inline{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
-.move{display:inline-flex;gap:2px;margin-left:auto}
-.move button{width:30px;height:30px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--fg);font:inherit;cursor:pointer}
-.move button:disabled{opacity:.3;cursor:default}
-.body{white-space:pre-wrap;margin:0;font:inherit}
-dl.meta{display:grid;grid-template-columns:max-content 1fr;gap:4px 16px;margin:12px 0}
-dl.meta dt{color:var(--muted);font-size:.875rem}
-dl.meta dd{margin:0}
-form .field{margin:10px 0}
-form .field>label,form .field>.name{display:block;font-size:.875rem;color:var(--muted);margin-bottom:2px}
-form select,form input[type=text],form input[type=number],form textarea{font:inherit;color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:6px 8px;max-width:100%}
-form textarea,form input[type=text]{width:100%}
-form input[type=number]{width:6em}
-form .checks{display:flex;flex-wrap:wrap;gap:4px 14px}
-form button[type=submit]{font:inherit;font-weight:600;padding:6px 18px;border-radius:6px;border:1px solid var(--fg);background:var(--fg);color:var(--bg);cursor:pointer}
-form button:disabled{opacity:.5}
-ol.history{list-style:none;margin:0;padding:0}
-ol.history li{padding:8px 0;border-bottom:1px solid var(--line)}
-ol.history .when{color:var(--muted);font-size:.85rem}
-ol.history details pre{white-space:pre-wrap;margin:4px 0;padding:8px;background:var(--bg);border:1px solid var(--line);border-radius:6px;font:inherit;font-size:.875rem}
-.arrow{color:var(--muted);margin:0 4px}
-progress{width:6em;height:.6em;vertical-align:middle;accent-color:var(--done-fg)}
-ol.history .note{white-space:pre-wrap}
-`;
+export type { Nav } from "./shell.ts";
 
 const JST_MS = 9 * 3_600_000;
 
-const formatJst = (iso: string): string => {
+export const formatJst = (iso: string): string => {
 	const t = Date.parse(iso);
 	if (Number.isNaN(t)) return iso;
 	return new Date(t + JST_MS).toISOString().slice(0, 16).replace("T", " ");
 };
 
-const ago = (iso: string, now: Date): string => {
+export const ago = (iso: string, now: Date): string => {
 	const minutes = Math.floor((now.getTime() - Date.parse(iso)) / 60_000);
 	if (Number.isNaN(minutes) || minutes < 1) return "たった今";
 	if (minutes < 60) return `${minutes} 分前`;
@@ -115,7 +37,7 @@ const ago = (iso: string, now: Date): string => {
 	return `${Math.floor(minutes / (60 * 24))} 日前`;
 };
 
-const when = (iso: string, now: Date) =>
+export const when = (iso: string, now: Date) =>
 	`${formatJst(iso)}（${ago(iso, now)}）`;
 
 export type Names = Map<string, string>;
@@ -123,12 +45,12 @@ export type Names = Map<string, string>;
 export const actorNames = (actors: Actor[]): Names =>
 	new Map(actors.map((a) => [a.id, a.display_name]));
 
-const nameOf = (names: Names, id: string) => names.get(id) ?? id;
+export const nameOf = (names: Names, id: string) => names.get(id) ?? id;
 
-const isState = (value: unknown): value is TaskState =>
+export const isState = (value: unknown): value is TaskState =>
 	TASK_STATES.includes(value as TaskState);
 
-const badge = (state: TaskState) =>
+export const badge = (state: TaskState) =>
 	html`<span class="state s-${state}">${state}</span>`;
 
 const stateSelect = (task: TaskRow) =>
@@ -137,7 +59,7 @@ const stateSelect = (task: TaskRow) =>
 			html`<option value="${s}"${s === task.state ? html` selected` : ""}>${s}</option>`,
 	)}</select>`;
 
-const labelChips = (names: string[]) =>
+export const labelChips = (names: string[]) =>
 	names.map((name) => html`<span class="label">${name}</span>`);
 
 const CLOSED: TaskState[] = ["done", "dropped"];
@@ -153,21 +75,14 @@ type RowOptions = {
 	project?: ProjectRow;
 	since?: string;
 	progress?: Progress;
-	/** review のタスクに返信欄を付けるとき、review の前の状態 */
-	reply?: { from: TaskState | null };
 };
 
 /** 続けさせるときは review の前の作業の状態に戻す。前が作業の状態でなければ todo にする */
-const resumeState = (from: TaskState | null): TaskState =>
+export const resumeState = (from: TaskState | null): TaskState =>
 	from === "todo" || from === "doing" ? from : "todo";
 
-const replyForm = (taskId: string, from: TaskState | null) => {
-	const resume = resumeState(from);
-	return html`<form class="reply" data-reply="${taskId}"><textarea name="answer" rows="2" maxlength="2000" required aria-label="返信" placeholder="判断を書く。次に作業する AI がそのまま読む"></textarea><div class="actions"><button type="submit" value="${resume}">返信して続けさせる（${resume}）</button><button type="submit" value="done">完了にする</button><button type="submit" value="dropped">やめる</button></div></form>`;
-};
-
 /** 数える末端が無い（子がすべて dropped の）ときは、率が意味を持たないので出さない */
-const progressBar = (p: Progress | undefined): Markup | "" =>
+export const progressBar = (p: Progress | undefined): Markup | "" =>
 	p && p.total > 0
 		? html`<progress value="${p.done}" max="${p.total}"></progress><span class="who">${p.done} / ${p.total}</span>`
 		: "";
@@ -191,24 +106,22 @@ const taskRow = (task: TaskRow, o: RowOptions) => {
 		task.assigneeId
 			? html`<span class="who">担当 ${nameOf(o.names, task.assigneeId)}</span>`
 			: ""
-	}${o.project ? html`<a class="who" href="/projects/${o.project.id}">${o.project.name}</a>` : ""}${move}${waiting}${
-		task.state === "review" && o.reply ? replyForm(task.id, o.reply.from) : ""
-	}</div>`;
+	}${o.project ? html`<a class="who" href="/projects/${o.project.id}">${o.project.name}</a>` : ""}${move}${waiting}</div>`;
 };
 
-type Tone = "good" | "bad" | "wait" | "";
+export type Tone = "good" | "bad" | "wait" | "";
 
-const pill = (text: string, tone: Tone) =>
+export const pill = (text: string, tone: Tone) =>
 	html`<span class="pr${tone ? ` ${tone}` : ""}">${text}</span>`;
 
-const REVIEW_PILLS: Record<string, [string, Tone]> = {
+export const REVIEW_PILLS: Record<string, [string, Tone]> = {
 	approved: ["レビュー 承認", "good"],
 	changes_requested: ["レビュー 修正依頼", "bad"],
 	review_required: ["レビュー 待ち", "wait"],
 	none: ["レビュー なし", ""],
 };
 
-const CHECKS_PILLS: Record<string, [string, Tone]> = {
+export const CHECKS_PILLS: Record<string, [string, Tone]> = {
 	success: ["CI 成功", "good"],
 	failure: ["CI 失敗", "bad"],
 	pending: ["CI 実行中", "wait"],
@@ -216,7 +129,7 @@ const CHECKS_PILLS: Record<string, [string, Tone]> = {
 };
 
 /** リンク先は AI が書いた URL なので、http と https だけを href にする */
-const linkTitle = (link: Link) => {
+export const linkTitle = (link: Link) => {
 	const text = link.title || link.url;
 	return /^https?:\/\//.test(link.url)
 		? html`<a class="title" href="${link.url}" rel="noreferrer">${text}</a>`
@@ -251,63 +164,46 @@ const linkSections = (links: Link[], now: Date) => {
 	return html`${deliverables.length > 0 ? html`<h2>成果物の PR</h2><div>${deliverables.map((l) => deliverableRow(l, now))}</div>` : ""}${references.length > 0 ? html`<h2>参考リンク</h2><div>${references.map(referenceRow)}</div>` : ""}`;
 };
 
-/** どの画面にも出すもの。triage は仕分け待ちの件数 */
-export type Nav = {
-	triage: number;
-	/** 直近の同期の警告の数 */
-	syncWarnings: number;
-};
+/** More の下の画面。中身は文書のように 1 列で組む */
+const doc = (
+	title: string,
+	content: Markup,
+	nav: Nav,
+	more?: MoreItem,
+): string =>
+	page({
+		title,
+		nav,
+		section: "more",
+		pane: "page",
+		side: moreMenu(nav, more),
+		main: html`<div class="doc">${content}</div>`,
+		more,
+	});
 
-const page = (title: string, content: Markup, nav: Nav): string =>
-	html`<!doctype html>
-<html lang="ja">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${title} - chakai</title>
-<style>${new Markup(CSS)}</style>
-</head>
-<body>
-<header><nav><a class="brand" href="/">chakai</a><a href="/">owner の番</a><a href="/triage">仕分け待ち <span class="n${nav.triage > 0 ? " some" : ""}">${nav.triage}</span></a><a href="/#projects">プロジェクト</a><a href="/sync">同期${nav.syncWarnings > 0 ? html` <span class="n some">警告 ${nav.syncWarnings}</span>` : ""}</a><a href="/settings">設定</a></nav></header>
-<main>
-<p id="alert" class="alert" role="alert" hidden></p>
-${content}
-</main>
-<script src="/assets/app.js"></script>
-</body>
-</html>`.value;
+export const renderMore = (nav: Nav): string =>
+	page({
+		title: "More",
+		nav,
+		section: "more",
+		pane: "page",
+		side: moreMenu(nav),
+		main: html`<div class="doc"><h1>More</h1>${moreMenu(nav)}</div>`,
+	});
 
-export const renderHome = (
+export const renderProjects = (
 	view: {
-		reviews: ReviewRow[];
 		projects: ProjectRow[];
 		counts: Map<string, StateCounts>;
-		names: Names;
-		now: Date;
 	},
 	nav: Nav,
 ): string => {
-	const projectById = new Map(view.projects.map((p) => [p.id, p]));
 	// repo ごとにプロジェクトが自動でできるので、タスクの無いものまで札にすると一覧が埋まる
 	const busy = view.projects.filter((p) => view.counts.has(p.id));
 	const idle = view.projects.filter((p) => !view.counts.has(p.id));
-	return page(
-		"owner の番",
-		html`<h1>owner の番 <span class="muted">review ${view.reviews.length} 件</span></h1>
-${
-	view.reviews.length === 0
-		? html`<p class="muted">判断を待っているタスクは無い。</p>`
-		: html`<div>${view.reviews.map((t) =>
-				taskRow(t, {
-					names: view.names,
-					now: view.now,
-					project: projectById.get(t.projectId),
-					since: t.since,
-					reply: { from: t.from },
-				}),
-			)}</div>`
-}
-<h2 id="projects">プロジェクト</h2>
+	return doc(
+		"プロジェクト",
+		html`<h1>プロジェクト</h1>
 ${
 	view.projects.length === 0
 		? html`<p class="muted">プロジェクトはまだ無い。</p>`
@@ -326,38 +222,7 @@ ${
 			}`
 }`,
 		nav,
-	);
-};
-
-export const renderTriage = (
-	view: {
-		rows: TriageRow[];
-		projects: ProjectRow[];
-		names: Names;
-		now: Date;
-	},
-	nav: Nav,
-): string => {
-	const projectById = new Map(view.projects.map((p) => [p.id, p]));
-	return page(
-		"仕分け待ち",
-		html`<h1>仕分け待ち <span class="muted">${view.rows.length} 件</span></h1>
-<p class="muted">AI が起票して、まだ扱いを決めていない backlog のタスク。どれかを選ぶと仕分け済みになる。</p>
-${
-	view.rows.length === 0
-		? html`<p class="muted">仕分けを待っているタスクは無い。</p>`
-		: view.rows.map((t) => {
-				const project = projectById.get(t.projectId);
-				return html`<div class="card"><div><a href="/tasks/${t.id}">${t.title}</a> ${labelChips(t.labels)}</div>
-<div class="muted">起票 ${nameOf(view.names, t.createdBy)}・${when(t.createdAt, view.now)}${project ? html`・<a href="/projects/${project.id}">${project.name}</a>` : ""}</div>
-${t.discoveredFrom.map(
-	(o) =>
-		html`<div class="muted">「<a href="/tasks/${o.id}">${o.title}</a>」の作業中に見つけた${o.seat ? html`（席 ${o.seat}）` : ""}</div>`,
-)}
-<div class="actions"><button type="button" data-triage="${t.id}" data-action="todo">todo に上げる</button><button type="button" data-triage="${t.id}" data-action="dropped">dropped にする</button><button type="button" data-triage="${t.id}" data-action="keep">backlog に残す</button></div></div>`;
-			})
-}`,
-		nav,
+		"projects",
 	);
 };
 
@@ -391,7 +256,7 @@ export const renderSettings = (view: SettingsView, nav: Nav): string => {
 		SETTING_KEYS.some((k) => s.settings.settings[k].source === "project");
 	const overridden = view.projects.filter(isOverridden);
 	const plain = view.projects.filter((s) => !isOverridden(s));
-	return page(
+	return doc(
 		"設定",
 		html`<h1>設定</h1>
 <h2>自分で作る todo の深さの上限 <span class="muted">${DEPTH_KEY}</span></h2>
@@ -409,6 +274,7 @@ ${
 			}`
 }`,
 		nav,
+		"settings",
 	);
 };
 
@@ -418,7 +284,7 @@ export const renderSync = (
 	now: Date,
 	nav: Nav,
 ): string =>
-	page(
+	doc(
 		"同期",
 		html`<h1>GitHub との同期 <span class="muted">直近 ${runs.length} 回</span></h1>
 <p class="muted">1 時間ごとの同期と、手で呼んだ同期の結果。新しい順。</p>
@@ -433,6 +299,7 @@ ${r.warnings.map((w) => html`<p class="alert">${w}</p>`)}</div>`,
 			)
 }`,
 		nav,
+		"sync",
 	);
 
 export const ACTIVE_STATES: TaskState[] = [
@@ -518,7 +385,7 @@ export const renderProject = (
 		return html`<a class="chip${on ? " on" : ""}" href="${stateHref(project.id, target.length > 0 ? target : ACTIVE_STATES)}" aria-pressed="${on ? "true" : "false"}">${on ? "✓ " : ""}${s}<span class="n">${counts[s] ?? 0}</span></a>`;
 	};
 
-	return page(
+	return doc(
 		project.name,
 		html`<h1>${project.name}</h1>
 ${project.description ? html`<p class="body muted">${project.description}</p>` : ""}
@@ -528,10 +395,11 @@ ${linkSections(view.links, now)}
 <div class="chips">${TASK_STATES.map(toggle)}</div>
 ${roots.length > 0 ? branch(roots, true) : html`<p class="muted">当てはまるタスクは無い。</p>`}`,
 		nav,
+		"projects",
 	);
 };
 
-const FIELD_NAMES: Record<string, string> = {
+export const FIELD_NAMES: Record<string, string> = {
 	title: "件名",
 	body: "本文",
 	state: "状態",
@@ -540,60 +408,15 @@ const FIELD_NAMES: Record<string, string> = {
 	labels: "ラベル",
 };
 
-const plain = (value: unknown): Markup => {
+export const plain = (value: unknown): Markup => {
 	if (value === null || value === undefined || value === "") {
 		return html`<span class="muted">なし</span>`;
 	}
 	return html`${typeof value === "string" ? value : JSON.stringify(value)}`;
 };
 
-const change = (event: TaskEvent, names: Names): Markup => {
-	const { field, before, after } = event;
-	const fromTo = (show: (value: unknown) => Markup) =>
-		html`${FIELD_NAMES[field] ?? field}: ${show(before)}<span class="arrow">→</span>${show(after)}`;
-	switch (field) {
-		case "created": {
-			const state = (after as { state?: unknown } | null)?.state;
-			return html`起票 ${isState(state) ? badge(state) : ""}`;
-		}
-		case "order_key":
-			return html`並びを変更`;
-		case "triaged_at":
-			return html`仕分け済みにした`;
-		case "relation": {
-			const kind = (after as { kind?: unknown } | null)?.kind;
-			return html`関係を付けた${typeof kind === "string" ? html`（${kind}）` : ""}`;
-		}
-		case "link": {
-			const link = (after ?? before) as {
-				url?: unknown;
-				role?: unknown;
-			} | null;
-			const role = link?.role === "deliverable" ? "成果物の PR" : "参考リンク";
-			return html`${role}を${after ? "付けた" : "消した"}${typeof link?.url === "string" ? html`（${link.url}）` : ""}`;
-		}
-		case "note":
-			return html`<span class="note">${plain(after)}</span>`;
-		case "state":
-			return fromTo((v) => (isState(v) ? badge(v) : plain(v)));
-		case "assignee_id":
-			return fromTo((v) =>
-				typeof v === "string" ? html`${nameOf(names, v)}` : plain(v),
-			);
-		case "labels":
-			return fromTo((v) =>
-				Array.isArray(v) && v.length > 0
-					? html`${labelChips(v.map(String))}`
-					: plain(null),
-			);
-		case "body":
-			return html`<details><summary>本文を変更</summary><div class="muted">前</div><pre>${plain(before)}</pre><div class="muted">後</div><pre>${plain(after)}</pre></details>`;
-	}
-	return fromTo(plain);
-};
-
 /** 関係の向きごとの呼び名。relation は「from_task が kind で to_task」と読む */
-const RELATION_NAMES: Record<
+export const RELATION_NAMES: Record<
 	RelatedTask["kind"],
 	{ outgoing: string; incoming: string }
 > = {
@@ -605,95 +428,8 @@ const RELATION_NAMES: Record<
 	replaced_by: { outgoing: "作り直した先", incoming: "作り直す前" },
 };
 
-const relationRow = (r: RelatedTask) =>
-	html`<div class="row"><span class="rel">${RELATION_NAMES[r.kind][r.outgoing ? "outgoing" : "incoming"]}</span>${badge(r.task.state)}<a class="title" href="/tasks/${r.task.id}">${r.task.title}</a><span class="who">${r.kind}${r.seat ? html`・席 ${r.seat}` : ""}</span></div>`;
-
-export const renderTask = (
-	view: TaskView,
-	history: TaskEvent[],
-	actors: Actor[],
-	labels: Label[],
-	now: Date,
-	nav: Nav,
-): string => {
-	const { task, project } = view;
-	const names = actorNames(actors);
-	const assignable = actors.filter((a) => a.active || a.id === task.assigneeId);
-	return page(
-		task.title,
-		html`<p class="crumbs"><a href="/projects/${project.id}">${project.name}</a>${view.ancestors.map(
-			(a) => html` › <a href="/tasks/${a.id}">${a.title}</a>`,
-		)}</p>
-<h1>${task.title}</h1>
-<p>${badge(task.state)} ${progressBar(view.progress.get(task.id))} ${labelChips(task.labels)}</p>
-${
-	task.state === "review"
-		? html`<div class="card"><strong>仰ぐ内容</strong>: ${task.waitingOn ?? ""}${view.lastReview ? html`<div class="muted">${nameOf(names, view.lastReview.asked_by)}・${when(view.lastReview.asked_at, now)}から review</div>` : ""}${replyForm(task.id, view.lastReview?.from ?? null)}</div>`
-		: ""
-}
-<dl class="meta">
-<dt>担当</dt><dd>${task.assigneeId ? nameOf(names, task.assigneeId) : html`<span class="muted">なし</span>`}</dd>
-<dt>起票</dt><dd>${nameOf(names, task.createdBy)} <span class="muted">${when(task.createdAt, now)}</span></dd>
-<dt>更新</dt><dd><span class="muted">${when(task.updatedAt, now)}</span></dd>
-</dl>
-<h2>本文</h2>
-${task.body ? html`<div class="card"><p class="body">${task.body}</p></div>` : html`<p class="muted">本文は無い。</p>`}
-${
-	view.children.length > 0
-		? html`<h2>子タスク</h2><div>${view.children.map((c, i) =>
-				taskRow(c, {
-					names,
-					now,
-					progress: view.progress.get(c.id),
-					movable: true,
-					prev: view.children[i - 1]?.id,
-					next: view.children[i + 1]?.id,
-				}),
-			)}</div>`
-		: ""
-}
-${linkSections(view.links, now)}
-${view.relations.length > 0 ? html`<h2>関係</h2><div>${view.relations.map(relationRow)}</div>` : ""}
-${
-	view.runs.length > 0
-		? html`<h2>実行記録</h2><div>${view.runs.map(
-				(r) =>
-					html`<div class="row"><span class="title">席 ${r.seat}</span><span class="who">${nameOf(names, r.actor_id)}・${r.model ?? "model なし"}</span><span class="who">${formatJst(r.started_at)} 〜 ${r.ended_at ? formatJst(r.ended_at) : "実行中"}</span></div>`,
-			)}</div>`
-		: ""
-}
-<h2>変更</h2>
-<form id="edit" class="card" data-task="${task.id}" data-state="${task.state}" data-assignee="${task.assigneeId ?? ""}" data-labels="${JSON.stringify([...task.labels].sort())}" data-waiting="${task.waitingOn ?? ""}">
-<div class="field"><label for="f-state">状態</label><select id="f-state" name="state">${TASK_STATES.map(
-			(s) =>
-				html`<option value="${s}"${s === task.state ? html` selected` : ""}>${s}</option>`,
-		)}</select></div>
-<div class="field" id="waiting-row"><label for="f-waiting">owner に仰ぐ内容（review にするときに要る）</label><textarea id="f-waiting" name="waiting_on" rows="2" maxlength="1000">${task.waitingOn ?? ""}</textarea></div>
-<div class="field"><label for="f-assignee">担当</label><select id="f-assignee" name="assignee_id"><option value="">なし</option>${assignable.map(
-			(a) =>
-				html`<option value="${a.id}"${a.id === task.assigneeId ? html` selected` : ""}>${a.display_name}</option>`,
-		)}</select></div>
-<div class="field"><span class="name">ラベル</span><div class="checks">${labels.map(
-			(l) =>
-				html`<label><input type="checkbox" name="label" value="${l.name}"${task.labels.includes(l.name) ? html` checked` : ""}> ${l.name}</label>`,
-		)}</div></div>
-<div class="field"><label for="f-new-labels">新しいラベル（カンマで区切る）</label><input id="f-new-labels" type="text" name="new_labels" autocomplete="off"></div>
-<div class="field"><label for="f-note">一言（履歴に残す。review から出すときに要る）</label><textarea id="f-note" name="note" rows="2" maxlength="2000"></textarea></div>
-<button type="submit">保存</button>
-</form>
-<h2>履歴</h2>
-<ol class="history">${[...history]
-			.reverse()
-			.map(
-				(e) =>
-					html`<li><div>${change(e, names)}</div><div class="when">${nameOf(names, e.actor_id)}・${e.caller_id === null ? (e.actor_id === SYNC_ACTOR_ID ? "Cron" : "ブラウザ") : (e.caller_name ?? "不明な呼び出し元")}・${when(e.at, now)}</div></li>`,
-			)}</ol>`,
-		nav,
-	);
-};
-
 export const renderNotFound = (nav: Nav): string =>
-	page(
+	doc(
 		"見つからない",
 		html`<h1>見つからない</h1><p><a href="/">owner の番へ戻る</a></p>`,
 		nav,

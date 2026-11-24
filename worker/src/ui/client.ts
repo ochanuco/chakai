@@ -11,8 +11,9 @@ export const CLIENT_JS = `"use strict";
 		alertBox.scrollIntoView({ block: "nearest" });
 	};
 
-	// 本文の無い書き込みも、REST は Content-Type が JSON のものだけを受ける
-	const send = async (method, path, body) => {
+	// 本文の無い書き込みも、REST は Content-Type が JSON のものだけを受ける。
+	// next があれば、書けた後にそこを開く（返事や仕分けの後に、一覧の次のタスクへ進む）
+	const send = async (method, path, body, next) => {
 		let res;
 		try {
 			res = await fetch(path, {
@@ -25,7 +26,8 @@ export const CLIENT_JS = `"use strict";
 			return false;
 		}
 		if (res.ok) {
-			location.reload();
+			if (next) location.assign(next);
+			else location.reload();
 			return true;
 		}
 		let message = "更新できなかった（" + res.status + "）";
@@ -38,7 +40,7 @@ export const CLIENT_JS = `"use strict";
 	};
 
 	const taskPath = (id) => "/v1/tasks/" + encodeURIComponent(id);
-	const patch = (id, body) => send("PATCH", taskPath(id), body);
+	const patch = (id, body, next) => send("PATCH", taskPath(id), body, next);
 
 	document.addEventListener("change", async (event) => {
 		const select = event.target;
@@ -85,31 +87,70 @@ export const CLIENT_JS = `"use strict";
 		if (!button) return;
 		const id = button.dataset.triage;
 		const action = button.dataset.action;
-		const siblings = button.parentElement.querySelectorAll("button");
+		const siblings = document.querySelectorAll("button[data-triage]");
 		for (const b of siblings) b.disabled = true;
+		const next = button.dataset.next;
 		const done =
 			action === "keep"
-				? await send("POST", taskPath(id) + "/triage")
-				: await patch(id, { state: action });
+				? await send("POST", taskPath(id) + "/triage", undefined, next)
+				: await patch(id, { state: action }, next);
 		if (!done) for (const b of siblings) b.disabled = false;
 	});
+
+	// 返事を空で送ったときの一言。review を出るには note が要り、
+	// 「このまま進めてよい」がいちばん多い返事なので、これを既定にする
+	const DEFAULT_REPLY = "それで進めて";
 
 	document.addEventListener("submit", async (event) => {
 		const form = event.target;
 		if (!(form instanceof HTMLFormElement) || !form.dataset.reply) return;
 		event.preventDefault();
-		const note = form.elements.namedItem("answer").value.trim();
+		const submitter = event.submitter;
+		if (!submitter) return;
+		let note = form.elements.namedItem("answer").value.trim();
 		if (!note) {
-			showError("返信を書く");
+			if (!("default" in submitter.dataset)) {
+				showError(submitter.textContent + " には一言を書く。履歴に残り、AI が読む");
+				return;
+			}
+			note = DEFAULT_REPLY;
+		}
+		const buttons = document.querySelectorAll(
+			"button[name=to], [data-reply] button",
+		);
+		for (const b of buttons) b.disabled = true;
+		const sent = await patch(
+			form.dataset.reply,
+			{ state: submitter.value, note },
+			form.dataset.next,
+		);
+		if (!sent) for (const b of buttons) b.disabled = false;
+	});
+
+	const typing = (el) =>
+		el instanceof HTMLElement &&
+		(el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName));
+
+	document.addEventListener("keydown", (event) => {
+		// ⌘Enter / Ctrl+Enter で、返事を Reply として送る
+		if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+			const form = event.target instanceof Element && event.target.closest("form[data-reply]");
+			if (!form) return;
+			event.preventDefault();
+			const button =
+				form.querySelector("[data-default]") ??
+				document.querySelector('button[form="' + form.id + '"][data-default]');
+			if (button) form.requestSubmit(button);
 			return;
 		}
-		const buttons = form.querySelectorAll("button");
-		for (const b of buttons) b.disabled = true;
-		const sent = await patch(form.dataset.reply, {
-			state: event.submitter.value,
-			note,
-		});
-		if (!sent) for (const b of buttons) b.disabled = false;
+		// j / k で一覧の次・前のタスクを開く
+		if (event.metaKey || event.ctrlKey || event.altKey || typing(event.target)) return;
+		if (event.key !== "j" && event.key !== "k") return;
+		const rows = [...document.querySelectorAll("a[data-row]")];
+		if (rows.length === 0) return;
+		const at = rows.findIndex((r) => r.hasAttribute("aria-current"));
+		const to = at < 0 ? rows[0] : rows[at + (event.key === "j" ? 1 : -1)];
+		if (to) location.assign(to.href);
 	});
 
 	const putSetting = async (form, value) => {
