@@ -127,6 +127,20 @@ export const CLIENT_JS = `"use strict";
 		if (!sent) for (const b of buttons) b.disabled = false;
 	});
 
+	// 長い本文は畳んでおき、はみ出したときだけ「全文を読む」を出す
+	for (const body of document.querySelectorAll("[data-fold]")) {
+		const button = body.nextElementSibling;
+		if (body.scrollHeight <= body.clientHeight + 4) {
+			body.classList.remove("fold");
+		} else if (button?.hasAttribute("data-unfold")) {
+			button.hidden = false;
+			button.addEventListener("click", () => {
+				body.classList.remove("fold");
+				button.hidden = true;
+			});
+		}
+	}
+
 	const typing = (el) =>
 		el instanceof HTMLElement &&
 		(el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName));
