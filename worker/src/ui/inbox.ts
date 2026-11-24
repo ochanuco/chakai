@@ -377,8 +377,65 @@ const REPLY_HINT = "空のまま Reply すると「それで進めて」と返�
 const composer = (d: Detail) =>
 	html`<li class="ev composer desk">${avatar("owner")}<form id="reply-desk" class="bubble" data-reply="${d.view.task.id}" data-next="${d.next}" data-question="${d.view.lastReview?.question ?? d.view.task.waitingOn ?? ""}"><label class="bh" for="answer-desk">返事 <span class="muted">${REPLY_HINT}</span></label><textarea id="answer-desk" name="answer" rows="3" maxlength="2000"></textarea></form></li>`;
 
-const metaRow = (label: string, body: Markup | string) =>
-	html`<div class="mrow"><span class="mlabel">${label}</span><div>${body}</div></div>`;
+const metaRow = (
+	label: string,
+	body: Markup | string,
+	picker: Markup | "" = "",
+) =>
+	html`<div class="mrow"><div class="mhead"><span class="mlabel">${label}</span>${picker}</div><div>${body}</div></div>`;
+
+const check = (on: boolean) =>
+	html`<span class="tick" aria-hidden="true">${on ? "✓" : ""}</span>`;
+
+/**
+ * 右の列の「変える」。GitHub の右の列と同じく、選んだらその場で書く。
+ * details を開くのに script は要らず、書き込みだけを script が REST に送る
+ */
+const picker = (label: string, menu: Markup) =>
+	html`<details class="pick"><summary aria-label="${label}を変える">変える</summary><div class="pop" role="menu">${menu}</div></details>`;
+
+const statePicker = (d: Detail) => {
+	const { task } = d.view;
+	const hint =
+		task.state === "review"
+			? "review から出すときは、判断の一言が要る"
+			: "review にするときは、ここに問いを書く";
+	return picker(
+		"状態",
+		html`<div data-pick="state" data-task="${task.id}" data-current="${task.state}" data-waiting="${task.waitingOn ?? ""}"><textarea name="text" rows="2" maxlength="2000" aria-label="一言" placeholder="${hint}"></textarea>${TASK_STATES.map(
+			(s) =>
+				html`<button type="button" role="menuitemradio" aria-checked="${String(s === task.state)}" data-value="${s}">${check(s === task.state)}${badge(s)}</button>`,
+		)}</div>`,
+	);
+};
+
+const assigneePicker = (d: Detail) => {
+	const { task } = d.view;
+	const assignable = d.actors.filter(
+		(a) => a.active || a.id === task.assigneeId,
+	);
+	return picker(
+		"担当",
+		html`<div data-pick="assignee" data-task="${task.id}" data-current="${task.assigneeId ?? ""}">${assignable.map(
+			(a) =>
+				html`<button type="button" role="menuitemradio" aria-checked="${String(a.id === task.assigneeId)}" data-value="${a.id}">${check(a.id === task.assigneeId)}${a.display_name}</button>`,
+		)}<button type="button" role="menuitemradio" aria-checked="${String(task.assigneeId === null)}" data-value="">${check(task.assigneeId === null)}<span class="muted">担当を外す</span></button></div>`,
+	);
+};
+
+const labelPicker = (d: Detail) => {
+	const { task } = d.view;
+	const names = [
+		...new Set([...d.labels.map((l) => l.name), ...task.labels]),
+	].sort();
+	return picker(
+		"ラベル",
+		html`<div data-pick="labels" data-task="${task.id}" data-current="${JSON.stringify([...task.labels].sort())}">${names.map(
+			(name) =>
+				html`<button type="button" role="menuitemcheckbox" aria-checked="${String(task.labels.includes(name))}" data-value="${name}">${check(task.labels.includes(name))}${name}</button>`,
+		)}<input type="text" name="new" maxlength="64" autocomplete="off" aria-label="新しいラベル" placeholder="新しいラベルを足す（Enter）"></div>`,
+	);
+};
 
 const pullRow = (link: Link, now: Date) => {
 	const g = link.github;
@@ -399,40 +456,14 @@ const pullRow = (link: Link, now: Date) => {
 	return html`<div class="pull">${linkTitle(link)}<span class="muted">${g.repo}#${g.number}${link.source === "marker" ? " 印から付けた" : ""}</span><span class="pills">${state}${g.state === null ? "" : pill(checks, checksTone)}${review ? pill(review, reviewTone) : ""}</span><span class="muted">${g.synced_at ? html`同期 ${timeAgo(g.synced_at, now)}` : "まだ同期していない"}</span></div>`;
 };
 
-const editForm = (d: Detail) => {
-	const { task } = d.view;
-	const assignable = d.actors.filter(
-		(a) => a.active || a.id === task.assigneeId,
-	);
-	return html`<details class="edit"><summary>状態・担当・ラベルを変える</summary>
-<form id="edit" data-task="${task.id}" data-state="${task.state}" data-assignee="${task.assigneeId ?? ""}" data-labels="${JSON.stringify([...task.labels].sort())}" data-waiting="${task.waitingOn ?? ""}">
-<div class="field"><label for="f-state">状態</label><select id="f-state" name="state">${TASK_STATES.map(
-		(s) =>
-			html`<option value="${s}"${s === task.state ? html` selected` : ""}>${s}</option>`,
-	)}</select></div>
-<div class="field" id="waiting-row"><label for="f-waiting">owner に仰ぐ内容（review にするときに要る）</label><textarea id="f-waiting" name="waiting_on" rows="2" maxlength="1000">${task.waitingOn ?? ""}</textarea></div>
-<div class="field"><label for="f-assignee">担当</label><select id="f-assignee" name="assignee_id"><option value="">なし</option>${assignable.map(
-		(a) =>
-			html`<option value="${a.id}"${a.id === task.assigneeId ? html` selected` : ""}>${a.display_name}</option>`,
-	)}</select></div>
-<fieldset class="field"><legend>ラベル</legend><div class="checks">${d.labels.map(
-		(l) =>
-			html`<label><input type="checkbox" name="label" value="${l.name}"${task.labels.includes(l.name) ? html` checked` : ""}> ${l.name}</label>`,
-	)}</div></fieldset>
-<div class="field"><label for="f-new-labels">新しいラベル（カンマで区切る）</label><input id="f-new-labels" type="text" name="new_labels" autocomplete="off"></div>
-<div class="field"><label for="f-note">一言（履歴に残す。review から出すときに要る）</label><textarea id="f-note" name="note" rows="2" maxlength="2000"></textarea></div>
-<button type="submit" class="primary">保存</button>
-</form></details>`;
-};
-
 const metaColumn = (d: Detail, names: Names) => {
 	const { view } = d;
 	const pulls = view.links.filter((l) => l.role === "deliverable");
 	const references = view.links.filter((l) => l.role === "reference");
 	return html`<aside class="meta" id="meta" aria-label="タスクの情報">
-${metaRow("状態", html`${badge(view.task.state)} ${progressBar(view.progress.get(view.task.id))}`)}
-${metaRow("担当", view.task.assigneeId ? nameOf(names, view.task.assigneeId) : html`<span class="muted">なし</span>`)}
-${metaRow("ラベル", view.task.labels.length > 0 ? html`${labelChips(view.task.labels)}` : html`<span class="muted">なし</span>`)}
+${metaRow("状態", html`${badge(view.task.state)} ${progressBar(view.progress.get(view.task.id))}`, statePicker(d))}
+${metaRow("担当", view.task.assigneeId ? nameOf(names, view.task.assigneeId) : html`<span class="muted">なし</span>`, assigneePicker(d))}
+${metaRow("ラベル", view.task.labels.length > 0 ? html`${labelChips(view.task.labels)}` : html`<span class="muted">なし</span>`, labelPicker(d))}
 ${pulls.length > 0 ? metaRow("成果物", html`${pulls.map((l) => pullRow(l, d.now))}`) : ""}
 ${references.length > 0 ? metaRow("参考", html`${references.map((l) => html`<div class="pull">${linkTitle(l)}${l.note ? html`<span class="muted">${l.note}</span>` : ""}</div>`)}`) : ""}
 ${
@@ -458,7 +489,6 @@ ${
 		: ""
 }
 ${metaRow("起票", html`${nameOf(names, view.task.createdBy)} <span class="muted">${formatJst(view.task.createdAt)}</span>`)}
-${editForm(d)}
 </aside>`;
 };
 
@@ -502,7 +532,7 @@ export const detailPane = (d: Detail) => {
 	const orderHref = `/tasks/${task.id}?from=${d.from}${d.order === "desc" ? "&order=asc" : ""}`;
 	const question = lastReview?.question ?? task.waitingOn ?? "";
 	const created = d.history.find((e) => e.field === "created");
-	return html`<header class="head">
+	return html`<header class="head" data-next="${d.next}">
 ${
 	// Triage はスマホで一覧を持たず 1 件ずつ捌くので、戻る先が無い
 	d.from === "triage"
