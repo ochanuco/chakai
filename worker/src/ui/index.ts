@@ -9,14 +9,14 @@ import { CLIENT_JS } from "./client.ts";
 import {
 	loadCounts,
 	loadDoing,
-	loadRecent,
-	loadTodo,
 	loadProject,
 	loadProjects,
+	loadRecent,
 	loadReviews,
 	loadSettings,
 	loadStateCounts,
 	loadTask,
+	loadTodo,
 	loadTriage,
 	type TriageRow,
 } from "./data.ts";
