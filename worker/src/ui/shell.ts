@@ -68,7 +68,7 @@ h1,h2,h3{margin:0;line-height:1.4}
 .empty{padding:20px;color:var(--muted);font-size:14px}
 .search{flex:none;padding:10px 12px;border-bottom:1px solid var(--line)}
 .search input{width:100%;height:34px;padding:0 10px;border:1px solid var(--line-strong);border-radius:8px;background:var(--paper)}
-.toast{flex:none;display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px;margin:10px 28px 0;padding:10px 14px;border-radius:10px;background:var(--ink);color:var(--paper);font-size:14px}
+.toast{position:fixed;z-index:20;bottom:24px;left:calc(150px + 50%);transform:translateX(-50%);width:min(560px,calc(100vw - 340px));display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px;padding:10px 14px;border-radius:10px;background:var(--ink);color:var(--paper);font-size:14px;box-shadow:0 8px 24px rgb(0 0 0 / .2)}
 .toast .what{flex:1 1 200px;min-width:0}
 .toast a{color:var(--paper);text-decoration:underline}
 .toast button{padding:4px 10px;border:1px solid var(--paper);border-radius:6px;background:transparent;color:var(--paper);font-size:13px}
@@ -115,13 +115,23 @@ progress{width:5em;height:.5em;vertical-align:middle;accent-color:var(--matcha)}
 .meta{position:sticky;top:0;width:260px;flex:none;align-self:stretch;border-left:1px solid var(--line);padding:20px;font-size:13px}
 .mrow{display:flex;flex-direction:column;gap:4px;padding:12px 0;border-bottom:1px solid var(--line)}
 .mrow:first-child{padding-top:0}
+.mhead{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.pick{position:relative}
+.pick summary{list-style:none;cursor:pointer;font-size:12px;color:var(--muted);padding:2px 8px;border-radius:6px}
+.pick summary::-webkit-details-marker{display:none}
+.pick summary:hover,.pick[open] summary{background:var(--sunken);color:var(--ink)}
+.pop{position:absolute;right:0;top:calc(100% + 4px);z-index:10;width:240px;max-height:380px;overflow-y:auto;padding:6px;background:var(--surface);border:1px solid var(--line-strong);border-radius:10px;box-shadow:0 8px 24px rgb(0 0 0 / .14)}
+.pop button{display:flex;align-items:center;gap:8px;width:100%;min-height:34px;padding:4px 8px;border:0;border-radius:6px;background:transparent;text-align:left;font-size:13px}
+.pop button:hover,.pop button:focus-visible{background:var(--sunken)}
+.pop button[aria-checked=true]{font-weight:600}
+.tick{flex:none;width:14px;color:var(--matcha);font-weight:700}
+.pop textarea,.pop input{display:block;width:100%;margin:2px 0 6px;padding:6px 8px;border:1px solid var(--line-strong);border-radius:6px;background:var(--paper);font-size:13px;resize:vertical}
+.pop input{margin:6px 0 2px}
+.moved{margin-left:6px;padding:0 6px;border-radius:999px;background:var(--ink);color:var(--paper);font-weight:600;white-space:nowrap}
 .mlabel{font-size:12px;color:var(--muted)}
 .pull{display:flex;flex-direction:column;gap:2px;margin-bottom:6px}
 .pills{display:flex;flex-wrap:wrap;gap:4px}
 .rel{margin-bottom:6px}
-.edit{padding-top:12px}
-.edit summary{cursor:pointer;color:var(--link)}
-.edit form{margin-top:8px}
 .ev{list-style:none;display:flex;gap:12px}
 .avatar{flex:none;width:32px;height:32px;border-radius:50%;background:var(--sunken);box-shadow:inset 0 0 0 1px var(--line);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;color:var(--muted)}
 .bubble{flex:1;min-width:0;background:var(--surface);border:1px solid var(--line);border-radius:10px}
@@ -227,7 +237,9 @@ form .checks{display:flex;flex-wrap:wrap;gap:4px 14px}
 .side{border-right:0}
 .pane-list .item[aria-current]{background:none;box-shadow:none}
 .doc{padding:16px 16px 32px}
-.toast{margin:8px 16px 0}
+.pop{position:static;width:auto;max-height:none;margin-top:6px;box-shadow:none}
+.pop button{min-height:44px}
+.toast{bottom:calc(68px + env(safe-area-inset-bottom));left:8px;right:8px;width:auto;transform:none}
 .tabbar{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));border-top:1px solid var(--line);background:var(--surface);padding:4px 0 env(safe-area-inset-bottom)}
 .tabbar a{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;min-height:52px;font-size:11px;color:var(--muted);white-space:nowrap}
 .tabbar a:hover{text-decoration:none}

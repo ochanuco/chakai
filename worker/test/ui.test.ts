@@ -492,12 +492,16 @@ describe("画面", () => {
 		expect(body).toContain("本文の 1 行目<br>2 行目");
 		expect(body).toContain(`<a href="/tasks/${parent.id}">親の件名</a>`);
 		expect(body).toContain("孫の件名");
+		// 右の列の「変える」は、今の値に印を付け、退いた actor を選ばせない
 		expect(body).toContain(
-			`data-task="${task.id}" data-state="review" data-assignee="akarin" data-labels="[&quot;infra&quot;]" data-waiting="進めてよいか"`,
+			`data-pick="state" data-task="${task.id}" data-current="review" data-waiting="進めてよいか"`,
 		);
-		expect(body).toContain('<option value="akarin" selected>Akarin</option>');
-		expect(body).not.toContain('<option value="retired"');
-		expect(body).toMatch(/value="infra" checked/);
+		expect(body).toContain('aria-checked="true" data-value="akarin">');
+		expect(body).not.toContain('data-value="retired"');
+		expect(body).toContain(
+			`data-pick="labels" data-task="${task.id}" data-current="[&quot;infra&quot;]"`,
+		);
+		expect(body).toContain('aria-checked="true" data-value="infra">');
 		// 起票は本文のカードに、呼び出し元つきで出す
 		expect(body).toMatch(
 			/<b>Yukarin<\/b> が起票した<\/span><span class="when"><time [^>]+>[^<]+<\/time><span class="via">working<\/span>/,
