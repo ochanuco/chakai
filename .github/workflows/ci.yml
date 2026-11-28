@@ -16,7 +16,7 @@ concurrency:
 jobs:
   # postinstall の `wrangler types` が worker-configuration.d.ts を生成する（gitignore 済み）
   ci:
-    uses: ochanuco/.github/.github/workflows/pnpm.yml@781255530e060ff35b956a9b417d4c4ec6bfa970 # v1.7.1
+    uses: ochanuco/.github/.github/workflows/pnpm.yml@ddb8e656d5e975d255c122b0090df4efcb7a5cae # v1.8.0
     with:
       run: |
         pnpm run typecheck
